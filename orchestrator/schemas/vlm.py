@@ -1,7 +1,7 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 
 
 class VLMObject(BaseModel):
@@ -18,7 +18,7 @@ class VLMObject(BaseModel):
         description="Chinese name of the detected object."
     )
 
-    bbox: tuple[int, int, int, int] = Field(
+    bbox: tuple[StrictInt, StrictInt, StrictInt, StrictInt] = Field(
         ...,
         description="Bounding box [x1, y1, x2, y2] in original image pixels."
     )
@@ -50,7 +50,7 @@ class VLMObject(BaseModel):
 class VLMSafety(BaseModel):
     """Safety inspection result."""
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
 
     pass_: bool = Field(
         ...,

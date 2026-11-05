@@ -1,5 +1,7 @@
 
-from pydantic import BaseModel, Field
+from urllib.parse import urlsplit
+
+from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 from .common import APIResponse
 
@@ -43,6 +45,15 @@ class CaptureData(BaseModel):
         gt=0,
         description="Original image height in pixels."
     )
+
+    @field_validator("preview_url")
+    @classmethod
+    def validate_preview_url(cls, value: str) -> str:
+        # Validate without replacing the original string with a normalized URL.
+        HttpUrl(value)
+        if not urlsplit(value).hostname:
+            raise ValueError("preview_url must contain a valid host.")
+        return value
 
 
 class CaptureResponse(APIResponse[CaptureData]):

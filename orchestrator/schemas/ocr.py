@@ -1,7 +1,7 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, StrictInt, model_validator
 
 
 class OCRTextBlock(BaseModel):
@@ -24,7 +24,7 @@ class OCRTextBlock(BaseModel):
         description="Recognized text content."
     )
 
-    bbox: tuple[int, int, int, int] = Field(
+    bbox: tuple[StrictInt, StrictInt, StrictInt, StrictInt] = Field(
         ...,
         description="Bounding box [x1, y1, x2, y2] in original image pixels."
     )

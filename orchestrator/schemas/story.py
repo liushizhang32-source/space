@@ -1,5 +1,5 @@
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -63,7 +63,9 @@ class StorySegment(BaseModel):
         description="TTS audio URL, required when duration_source is tts."
     )
 
-    highlight_object_ids: list[str] = Field(
+    highlight_object_ids: list[
+        Annotated[str, Field(pattern=r"^[a-z][a-z0-9]{3,11}_p\d{2}_o\d{2}$")]
+    ] = Field(
         default_factory=list,
         description="Object IDs highlighted in this segment."
     )
