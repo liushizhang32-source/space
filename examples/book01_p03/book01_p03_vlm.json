@@ -1,0 +1,43 @@
+{
+  "schema_version": "1.0",
+  "book_id": "book01",
+  "page_id": "book01_p03",
+  "page_no": 3,
+  "status": "ok",
+  "image_width": 900,
+  "image_height": 1200,
+  "description": "夜晚的森林，一只小兔子站在树下，月光洒在树梢。",
+  "objects": [
+    {
+      "object_id": "book01_p03_o01",
+      "label": "兔子",
+      "bbox": [
+        420,
+        620,
+        620,
+        900
+      ],
+      "confidence": 0.92
+    },
+    {
+      "object_id": "book01_p03_o02",
+      "label": "树",
+      "bbox": [
+        60,
+        470,
+        300,
+        1080
+      ],
+      "confidence": 0.96
+    }
+  ],
+  "scene_tags": [
+    "夜晚",
+    "森林"
+  ],
+  "safety": {
+    "pass": true,
+    "flags": []
+  },
+  "elapsed_ms": 2100
+}

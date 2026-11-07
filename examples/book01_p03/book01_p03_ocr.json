@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.0",
+  "book_id": "book01",
+  "page_id": "book01_p03",
+  "page_no": 3,
+  "status": "ok",
+  "image_width": 900,
+  "image_height": 1200,
+  "text_blocks": [
+    {
+      "block_id": "book01_p03_t01",
+      "order": 1,
+      "text": "从前有只小兔子，住在森林边上。",
+      "bbox": [
+        90,
+        940,
+        800,
+        990
+      ],
+      "confidence": 0.97
+    },
+    {
+      "block_id": "book01_p03_t02",
+      "order": 2,
+      "text": "一天晚上，它出门去找朋友。",
+      "bbox": [
+        90,
+        998,
+        800,
+        1048
+      ],
+      "confidence": 0.97
+    }
+  ],
+  "page_confidence": 0.97,
+  "elapsed_ms": 1830
+}

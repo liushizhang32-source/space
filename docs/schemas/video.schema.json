@@ -1,0 +1,116 @@
+{
+  "$defs": {
+    "VideoSegment": {
+      "additionalProperties": true,
+      "properties": {
+        "segment_id": {
+          "pattern": "^.+_s\\d{2}$",
+          "title": "Segment Id",
+          "type": "string"
+        },
+        "start_sec": {
+          "minimum": 0,
+          "title": "Start Sec",
+          "type": "number"
+        },
+        "end_sec": {
+          "exclusiveMinimum": 0,
+          "title": "End Sec",
+          "type": "number"
+        }
+      },
+      "required": [
+        "segment_id",
+        "start_sec",
+        "end_sec"
+      ],
+      "title": "VideoSegment",
+      "type": "object"
+    }
+  },
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "book_id": {
+      "title": "Book Id",
+      "type": "string"
+    },
+    "page_id": {
+      "title": "Page Id",
+      "type": "string"
+    },
+    "page_no": {
+      "maximum": 99,
+      "minimum": 1,
+      "title": "Page No",
+      "type": "integer"
+    },
+    "status": {
+      "enum": [
+        "ok",
+        "failed"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "video_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Video Url"
+    },
+    "duration_sec": {
+      "exclusiveMinimum": 0,
+      "title": "Duration Sec",
+      "type": "number"
+    },
+    "resolution": {
+      "pattern": "^\\d{3,4}x\\d{3,4}$",
+      "title": "Resolution",
+      "type": "string"
+    },
+    "fps": {
+      "maximum": 120,
+      "minimum": 1,
+      "title": "Fps",
+      "type": "integer"
+    },
+    "segments": {
+      "items": {
+        "$ref": "#/$defs/VideoSegment"
+      },
+      "minItems": 1,
+      "title": "Segments",
+      "type": "array"
+    },
+    "elapsed_ms": {
+      "minimum": 0,
+      "title": "Elapsed Ms",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version",
+    "book_id",
+    "page_id",
+    "page_no",
+    "status",
+    "duration_sec",
+    "resolution",
+    "fps",
+    "segments",
+    "elapsed_ms"
+  ],
+  "title": "VideoDoc",
+  "type": "object"
+}

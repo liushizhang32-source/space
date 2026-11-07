@@ -1,7 +1,36 @@
+# Python
 __pycache__/
-.pytest_cache/
-.venv*/
-data/
+*.py[cod]
+*.egg-info/
+
+# 本地环境/依赖（不入库）
 .env
 .env.*
 !.env.example
+venv/
+.venv*/
+_vendor/
+_tools/
+_deps/
+_wheels/
+
+# 运行时产物（DATA_DIR 由环境变量决定，默认 ./data）
+data/
+_demo_data/
+*.log
+
+# 测试与临时目录
+.pytest_cache/
+_test_tmp/
+_scratch/
+_tmp/
+_piptmp/
+_pytest_tmp/
+_pyt_tmp/
+_pkg_verify/
+_verify_data/
+pytest-cache-files-*/
+
+# 编辑器
+.vscode/
+.idea/
