@@ -3,54 +3,49 @@ on:
   push:
   pull_request:
   workflow_dispatch:
-
 jobs:
   checks:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: 安装最小依赖
-        run: |
-          python -m pip install --upgrade pip
-          pip install pydantic pillow numpy
-      - name: 定位模块目录
+      - name: Locate module
         id: locate
         run: |
           for d in paperbook-ai paperbook-ai-m2/paperbook-ai .; do
             if [ -f "$d/scripts/isolated_check.py" ]; then
               echo "dir=$d" >> "$GITHUB_OUTPUT"
-              echo "模块目录：$d"
               exit 0
             fi
           done
-          echo "找不到 scripts/isolated_check.py" >&2
           exit 1
-      - name: 准备日志目录
+      - name: Install test dependencies
+        run: python -m pip install -r "${{ steps.locate.outputs.dir }}/requirements-test.txt" "pydantic>=2.11,<3"
+      - name: Prepare logs
         run: mkdir -p m2-logs
-      - name: 1) 单元测试
+      - name: Unit and checker regressions
         working-directory: ${{ steps.locate.outputs.dir }}
-        run: python tests/run_all.py 2>&1 | tee "${{ github.workspace }}/m2-logs/tests.log"
-      - name: 2) 隔离自检
+        env:
+          SCHEMA_REPO_ROOT: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          python -m pytest tests -q -ra 2>&1 | tee "${{ github.workspace }}/m2-logs/tests.log"
+      - name: Isolated check
         working-directory: ${{ steps.locate.outputs.dir }}
-        run: python scripts/isolated_check.py 2>&1 | tee "${{ github.workspace }}/m2-logs/isolated.log"
-      - name: 3) 公共 Schema 校验
+        run: |
+          set -euo pipefail
+          python scripts/isolated_check.py 2>&1 | tee "${{ github.workspace }}/m2-logs/isolated.log"
+      - name: Public Schema gate
         env:
           MODULE_DIR: ${{ steps.locate.outputs.dir }}
         run: |
-          set +e
-          python "$MODULE_DIR/scripts/validate_with_orchestrator.py" \
-            --repo-root . --from "$MODULE_DIR/samples/example" \
-            > m2-logs/schema.log 2>&1
-          code=$?
-          cat m2-logs/schema.log
-          if [ "$code" -eq 2 ]; then
-            echo "::warning::公共 Schema 未验证（没找到 orchestrator/schemas）"
-            exit 0
-          fi
-          exit "$code"
+          set -euo pipefail
+          python "$MODULE_DIR/scripts/validate_with_orchestrator.py" --repo-root . --from "$MODULE_DIR/samples/example" 2>&1 | tee m2-logs/schema.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
