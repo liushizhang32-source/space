@@ -69,6 +69,10 @@ python scripts/isolated_check.py
 
 ## 5. 公共 Schema 兼容性（需联合仓库）
 
+> ✅ 2026-11-08 已在 `space` 仓库 GitHub Actions 用**真实** `orchestrator/schemas` 跑通：
+> 2 页 4 个产物全部 PASS（详见 [RUN_REPORT.md](RUN_REPORT.md) 第 5 节）。
+> 下面是本地复跑方式。
+
 隔离自检只验内部契约。要验公共 Pydantic 模型，**有联合仓库的 GitHub 地址就够了**：
 
 ```powershell
@@ -108,15 +112,66 @@ python scripts/validate_with_orchestrator.py --repo-root C:\code\space --page bo
 
 判定：
 
-- 退出码 `0`：公共 Schema 通过；
-- 退出码 `1`：产物不符合公共模型（会打印具体字段错误）；
+- 退出码 `0`：公共 Schema 通过（且**所有**被检查的产物都在）；
+- 退出码 `1`：产物不符合公共模型，或缺文件/坏 JSON（会打印具体原因）；
 - 退出码 `2`：**拿不到公共模型 = 未验证**，不算通过。
+
+> ⚠️ 校验器按**验收**标准执行：`ocr.json` 与 `vlm.json` **缺一个就算失败**。
+> 运行阶段 VLM 失败不产出文件是合法的（见 INTEGRATION），但那页不要放进验收样本目录。
 
 > ⚠️ **先重新生成产物再验**：早期跑出来的 `vlm.json` 可能残留 `producer` 字段，
 > 严格（`extra="forbid"`）的公共模型会直接拒绝。用当前代码重跑一次即可：
 > `python run.py --image samples/demo_page.png --book-id book01 --page-no 1`
 
-## 6. 本手册**不覆盖**
+## 6. 在 GitHub 仓库上跑（Actions）
+
+仓库里已带 workflow：`.github/workflows/m2-vision-checks.yml`。
+它在 **ubuntu + Python 3.12** 上依次跑三条命令，并把日志挂成 artifact。
+
+### 步骤
+
+```powershell
+# 1) 把模块推进联合仓库的自己的分支（不要直接推 main/dev）
+cd C:\code\space
+git checkout -b zhc-1
+# 把 paperbook-ai/ 目录整个拷进来（或按你们的目录约定放置）
+git add paperbook-ai
+git commit -m "feat(vision): M2 视觉模块 + 隔离检查 workflow"
+git push -u origin zhc-1
+```
+
+1. 在 GitHub 上对 `zhc-1 → dev` 开 Pull Request；
+2. 进 **Actions** 页，选 `m2-vision-checks`，看这次 run；
+3. 三个 step 的名字就是结论：
+   - `1) 单元测试` → 期望 `86 passed, 0 failed`
+   - `2) 隔离自检` → 期望 `13/13 通过`
+   - `3) 公共 Schema 校验` → 期望 `[PASS] … 结论：N 页全部通过`
+4. 页面底部 **Artifacts → m2-check-logs** 下载三份原始日志，可直接作为证据。
+
+也可以不开 PR，在 Actions 页点 **Run workflow**（`workflow_dispatch`）手动触发。
+
+### 这条 workflow 的关键点
+
+- **模块放哪都行**：第一步自动探测 `paperbook-ai/` 或仓库根；
+- **`--repo-root .`**：在联合仓库里这一步导入的就是**真实** `orchestrator.schemas.ocr/vlm`，
+  不再是我本机的仿真模型；
+- 找不到 `orchestrator/schemas` 时脚本返回 2，workflow 会打 `::warning::` 但**不让 CI 变红**
+  （未验证 ≠ 失败）；字段真的不匹配才返回 1 让 CI 失败。
+
+### 不想配 CI？用 Codespaces
+
+仓库页 → **Code → Codespaces → Create codespace**，在云端终端里跑同样的三条：
+
+```bash
+cd paperbook-ai
+python tests/run_all.py
+python scripts/isolated_check.py
+python scripts/validate_with_orchestrator.py --repo-root .. --from samples/example
+```
+
+（Codespaces 里仓库根是上一级，所以 `--repo-root ..`。）
+
+## 7. 本手册**不覆盖**
 
 - 真实 PaddleOCR / 真实 VLM 的质量与耗时；
 - 真实绘本（授权样本）；
@@ -124,7 +179,7 @@ python scripts/validate_with_orchestrator.py --repo-root C:\code\space --page bo
 - 阶段硬超时（由编排层的 timeout 决定，模块只做单次 HTTP 超时）；
 - 联合仓库里其它依赖（本脚本只用到 pydantic 与两个 schema 模块）。
 
-## 7. 失败排查
+## 8. 失败排查
 
 | 现象 | 可能原因 |
 |---|---|

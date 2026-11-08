@@ -56,6 +56,23 @@ vlm.json  : data\json\book01_p01_vlm.json  [ok] objects=2 0ms backend=stub
 contract  : ok
 ```
 
+## CI（GitHub Actions）
+
+仓库**根目录**需要有 `.github/workflows/m2-vision-checks.yml`。
+本包里的 `paperbook-ai/.github/workflows/m2-vision-checks.yml` 只是同一份文件的副本，
+**放在模块目录里不会触发**，必须放到仓库根（`space/.github/workflows/`）。
+
+它跑三步，任一失败即变红：
+
+| 步骤 | 命令 | 覆盖 |
+|---|---|---|
+| 1 | `python -m pytest tests -q` | 94 条；`SCHEMA_REPO_ROOT` 指向仓库根，用**真实**的 `orchestrator/schemas` |
+| 2 | `python scripts/isolated_check.py` | 13 项隔离自检（含超时→2002 映射） |
+| 3 | `validate_with_orchestrator.py --repo-root . --from samples/example` | 公共 Schema 验收：缺文件、坏 JSON 都算失败 |
+
+依赖由 `requirements-test.txt` 提供（`-r requirements.txt` + pytest + opencv-headless）。
+本地没装 pytest 时用 `python tests/run_all.py`（86 条，零第三方依赖）。
+
 ## 物体索引与点读
 
 点读不能每次都调 VLM（本地 13 s/页），所以拆成"离线建库 + 在线查表"：

@@ -9,4 +9,4 @@
 [PASS] exif01_p01 ocr.json  status=ok
 [PASS] exif01_p01 vlm.json  status=ok
 
-结论：2 页全部通过公共 Schema 校验
+结论：2 页、4 个产物全部通过公共 Schema 校验

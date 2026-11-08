@@ -86,17 +86,28 @@ python scripts/isolated_check.py
 
 ## 六、回归测试
 
+两套入口，内容等价、依赖不同：
+
 ```
-python tests/run_all.py  →  86 passed, 0 failed
+python tests/run_all.py      →  86 passed, 0 failed     # 本机已跑，无 pytest 也能跑
+python -m pytest tests -q    →  94 passed               # 本地无 pytest，由 CI 首跑确认
 ```
 
-本轮未删除任何既有测试；N01–N03 的行为由隔离自检覆盖（不依赖 pytest）。
+| 入口 | 依赖 | 覆盖 |
+|---|---|---|
+| `tests/run_all.py` | 仅 Pillow / NumPy | 86 条既有用例 |
+| `pytest tests` | + pytest、opencv（`requirements-test.txt`） | 86 条 + `test_public_checker.py` 8 条 |
+
+`test_public_checker.py` 需要 `SCHEMA_REPO_ROOT` 指向带 `orchestrator/schemas` 的仓库根，
+否则它自己会 `pytest.fail`（未验证不算通过）。CI 里已由 workflow 设置。
+
+本轮未删除任何既有测试；N01–N03 的行为由隔离自检覆盖。
 
 ## 七、仍未闭环（如实列出）
 
-1. **公共 Schema 尚未在真实联合仓库跑过**：校验脚本已支持 `--repo-root`，
-   并用**仿真仓库**验证了正例通过、负例（多一个字段）退出 1；
-   真实仓库需在有 `orchestrator/schemas` 的环境里再跑一次（见第七节命令）。
+1. **公共 Schema 已在 CI 用真实模型跑通**（2026-11-08，`space` 仓库 PR #3 / run #2）：
+   `pydantic=2.14.3`，`OCRData`/`VLMData` 来自 runner 上的 `orchestrator/schemas/`，
+   2 页 4 个产物全部 PASS。仍未覆盖真实绘本与更复杂版式。
 2. **真实 Paddle / VLM / 真实绘本未验证**：质量、耗时、阅读顺序均无实测。
 3. **依赖与模型版本未锁定**：`requirements.txt` 仅 Pillow/NumPy。
 4. **同页并发无锁**：需编排层按 `page_id` 串行；`_drop_stale` 删除失败被忽略。

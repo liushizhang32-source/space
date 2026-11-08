@@ -175,14 +175,21 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[INFO] 待校验 {len(pages)} 页\n")
 
     failed = 0
+    checked = 0
     for page in pages:
         for kind, model in (("ocr", ocr_model), ("vlm", vlm_model)):
             path = _doc_path(from_dir or data_dir, page, kind, flat=from_dir is not None)
             if not path.is_file():
-                # VLM 阶段失败不产出文件是合法状态，记为 SKIP 而不是失败
-                print(f"[SKIP] {page} {kind}.json 不存在（阶段失败或未运行）")
+                failed += 1
+                print(f"[FAIL] {page} {kind}.json 不存在；成功产物验收要求文件齐全")
                 continue
-            doc = json.loads(path.read_text(encoding="utf-8"))
+            try:
+                doc = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                failed += 1
+                print(f"[FAIL] {page} {kind}.json 无法读取或不是合法 JSON")
+                continue
+            checked += 1
             errors = _validate(model, doc)
             if errors:
                 failed += 1
@@ -193,10 +200,10 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"[PASS] {page} {kind}.json  status={doc.get('status')}")
 
     print()
-    if failed:
-        print(f"结论：{failed} 个产物不符合公共 Schema")
+    if failed or checked == 0:
+        print(f"结论：{failed} 个产物失败，实际校验 {checked} 个；未通过验收")
         return EXIT_INVALID
-    print(f"结论：{len(pages)} 页全部通过公共 Schema 校验")
+    print(f"结论：{len(pages)} 页、{checked} 个产物全部通过公共 Schema 校验")
     return EXIT_OK
 
 

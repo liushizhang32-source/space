@@ -55,7 +55,10 @@ def _image(path: Path, size=(600, 800)) -> Path:
     image = Image.new("RGB", size, "white")
     draw = ImageDraw.Draw(image)
     draw.rectangle([50, 50, size[0] - 50, size[1] // 2], outline="black", width=3)
-    draw.text((60, size[1] - 120), "测试页", fill="black")
+    try:
+        draw.text((60, size[1] - 120), "sample page", fill="black")  # 只用 ASCII，避免 CI 缺中文字体
+    except Exception:  # noqa: BLE001 - 画字失败不影响几何断言
+        pass
     image.save(path)
     return path
 

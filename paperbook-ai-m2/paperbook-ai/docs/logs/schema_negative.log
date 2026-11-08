@@ -1,8 +1,24 @@
+### 用例 A：验收目录里只有 ocr.json，缺 vlm.json
+期望：退出码 1（成功产物验收要求文件齐全）
 [INFO] 公共 Schema 根目录：C:\Users\zhc\Documents\deepseek-harness\default-workspace\.pkg\fake_space
 [INFO] pydantic=2.14.2
 [INFO] OCRData ← C:\Users\zhc\Documents\deepseek-harness\default-workspace\.pkg\fake_space\orchestrator\schemas\ocr.py
 [INFO] VLMData ← C:\Users\zhc\Documents\deepseek-harness\default-workspace\.pkg\fake_space\orchestrator\schemas\vlm.py
-[INFO] 待校验 2 页
+[INFO] 待校验 1 页
+
+[PASS] book01_p01 ocr.json  status=ok
+[FAIL] book01_p01 vlm.json 不存在；成功产物验收要求文件齐全
+
+结论：1 个产物失败，实际校验 1 个；未通过验收
+**实际退出码：1**
+
+### 用例 B：产物里多一个未知字段 future_field
+期望：严格模型（extra=forbid）下退出码 1；公共模型默认忽略未知字段，故真实 CI 中应为 0
+[INFO] 公共 Schema 根目录：C:\Users\zhc\Documents\deepseek-harness\default-workspace\.pkg\fake_space
+[INFO] pydantic=2.14.2
+[INFO] OCRData ← C:\Users\zhc\Documents\deepseek-harness\default-workspace\.pkg\fake_space\orchestrator\schemas\ocr.py
+[INFO] VLMData ← C:\Users\zhc\Documents\deepseek-harness\default-workspace\.pkg\fake_space\orchestrator\schemas\vlm.py
+[INFO] 待校验 1 页
 
 [PASS] book01_p01 ocr.json  status=ok
 [FAIL] book01_p01 vlm.json
@@ -10,7 +26,8 @@
        future_field
          Extra inputs are not permitted [type=extra_forbidden, input_value=True, input_type=bool]
            For further information visit https://errors.pydantic.dev/2.14/v/extra_forbidden
-[PASS] exif01_p01 ocr.json  status=ok
-[PASS] exif01_p01 vlm.json  status=ok
 
-结论：1 个产物不符合公共 Schema
+结论：1 个产物失败，实际校验 2 个；未通过验收
+**实际退出码：1**
+
+汇总：A=1 B=1（两者都应为 1）

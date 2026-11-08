@@ -50,12 +50,12 @@ page_id   : book03_p01
   PASS  test_schema_compat.test_cli_exits_5_when_vlm_stage_fails
 [env] .env 已加载（OCR=paddle, VLM=http）
 page_id   : book01_p01
-ocr.json  : C:\Users\zhc\Documents\deepseek-harness\default-workspace\paperbook-ai\tests\.tmp\case_139b91637a\data\json\book01_p01_ocr.json  [ok] blocks=1 conf=0.99 0ms
+ocr.json  : C:\Users\zhc\Documents\deepseek-harness\default-workspace\paperbook-ai\tests\.tmp\case_21b3d065c1\data\json\book01_p01_ocr.json  [ok] blocks=1 conf=0.99 0ms
 contract  : ok
   PASS  test_schema_compat.test_cli_only_ocr_never_builds_vlm_backend
 [env] .env 已加载（OCR=paddle, VLM=http）
 page_id   : book02_p01
-vlm.json  : C:\Users\zhc\Documents\deepseek-harness\default-workspace\paperbook-ai\tests\.tmp\case_1da4a12104\data\json\book02_p01_vlm.json  [empty] objects=0 0ms
+vlm.json  : C:\Users\zhc\Documents\deepseek-harness\default-workspace\paperbook-ai\tests\.tmp\case_381175057b\data\json\book02_p01_vlm.json  [empty] objects=0 0ms
 contract  : ok
   PASS  test_schema_compat.test_cli_only_vlm_never_builds_ocr_backend
   PASS  test_schema_compat.test_exif_bbox_stays_inside_raw_frame

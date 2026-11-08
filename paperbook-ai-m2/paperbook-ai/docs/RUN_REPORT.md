@@ -37,7 +37,8 @@ ollama: ollama version is 0.40.15
 | 1 | `.venv\Scripts\python.exe tests\run_all.py` | **0** | `docs/logs/tests.log` |
 | 2 | `.venv\Scripts\python.exe scripts\isolated_check.py` | **0** | `docs/logs/isolated.log` |
 | 3 | `validate_with_orchestrator.py --repo-root <仿真仓> --from samples\example` | **0** | `docs/logs/schema_positive.log` |
-| 4 | 同上，但注入一个多余字段 | **1**（预期失败） | `docs/logs/schema_negative.log` |
+| 4 | 同上两条负例：缺 `vlm.json` / 注入多余字段 | **1 / 1**（预期失败） | `docs/logs/schema_negative.log` |
+| 5 | **GitHub Actions（真实公共模型）** | **0** | 见第 5 节 |
 
 ## 3. 实际输出
 
@@ -136,24 +137,60 @@ copy samples\example\*.json data\json\
 python scripts/validate_with_orchestrator.py --repo-root C:\code\space --all
 ```
 
-## 5. 在真实联合仓库上跑（待队长执行）
+## 5. 真实公共模型校验：已在 GitHub Actions 跑通（2026-11-08）
 
-```powershell
-git clone https://github.com/<组织>/<仓库>.git C:\code\space
-cd paperbook-ai
-python scripts/validate_with_orchestrator.py --repo-root C:\code\space --from samples\example
+仓库 `liushizhang32-source/space`，分支 `zhc`，PR #3，workflow run `m2-vision-checks #2`，结论 **Success (18s)**。
+
+关键日志（runner 上的真实文件路径，不是仿真）：
+
+```
+[INFO] 公共 Schema 根目录：/home/runner/work/space/space
+[INFO] pydantic=2.14.3
+[INFO] OCRData ← /home/runner/work/space/space/orchestrator/schemas/ocr.py
+[INFO] VLMData ← /home/runner/work/space/space/orchestrator/schemas/vlm.py
+[INFO] 待校验 2 页
+
+[PASS] book01_p01 ocr.json  status=ok
+[PASS] book01_p01 vlm.json  status=ok
+[PASS] exif01_p01 ocr.json  status=ok
+[PASS] exif01_p01 vlm.json  status=ok
+
+结论：2 页全部通过公共 Schema 校验
 ```
 
-判读：
+同一 run 里另外两步也是绿的：`86 passed, 0 failed`、`13/13 通过`（当时 workflow 用 `run_all.py`）。
+原始日志可在该 run 的 **Artifacts → m2-check-logs** 下载（tests.log / isolated.log / schema.log）。
 
-- 退出码 `0` → 公共 Schema 通过；
-- 退出码 `1` → 字段不匹配，输出会指出具体字段（把这行发我即可修）；
-- 退出码 `2` → 没找到 `orchestrator/schemas/ocr.py`，属于**未验证**。
+本地复跑（任意环境）：
+
+```powershell
+git clone https://github.com/liushizhang32-source/space.git C:\code\space
+cd C:\code\space
+python paperbook-ai-m2\paperbook-ai\scripts\validate_with_orchestrator.py `
+    --repo-root . --from paperbook-ai-m2\paperbook-ai\samples\example
+```
 
 ## 6. 本次执行未覆盖
 
 - 真实 PaddleOCR / 真实 VLM 的推理质量与耗时；
-- 真实授权绘本；
+- 真实授权绘本（Schema 校验只覆盖 2 页合成样本）；
 - 同页并发；
 - 阶段硬超时（编排层职责）；
-- 真实公共模型（需联合仓库，见第 5 节）。
+- 更复杂的版式（多栏、旋转、密集文字）。
+
+## 7. 应用评审修复文件后的变化（2026-11-08，待新一轮 CI）
+
+从 `MEMBER2_FIXED_FILES/` 应用了：
+
+| 文件 | 变化 |
+|---|---|
+| `scripts/validate_with_orchestrator.py` | **校验器改为验收语义**：缺 `ocr`/`vlm` 任一文件、坏 JSON、`checked==0` 均退出 1 |
+| `tests/test_public_checker.py` | 新增 8 条校验器回归（需 `SCHEMA_REPO_ROOT`） |
+| `requirements-test.txt` | pytest + `opencv-python-headless==5.0.0.93` |
+| `.github/workflows/m2-vision-checks.yml` | 改用 `pytest tests`，公共校验作为硬门禁（`set -euo pipefail`） |
+
+本地已验：`run_all` 86 passed、隔离自检 13/13、严格校验器对样本 2 页 4 产物全 PASS；
+缺文件与坏 JSON 两种情形均退出 1。
+
+**待新一轮 CI 确认**：pytest 计数应为 94；`opencv-python-headless==5.0.0.93` 的 Linux wheel；
+以及 `test_non_integer_bbox_is_failure`（已把样例值改成 `1.5`，避免 pydantic 宽松模式把 `1.0` 转成 `1`）。
