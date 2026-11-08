@@ -1,0 +1,101 @@
+{
+  "pages": 3,
+  "gt_objects": 15,
+  "detected_objects": 15,
+  "positive_samples": 600,
+  "background_samples": 180,
+  "top1_accuracy": 1.0,
+  "top1_accuracy_detected": 1.0,
+  "detected_samples": 600,
+  "wrong_object_rate": 0.0,
+  "miss_rate": 0.0,
+  "background_false_hit_rate": 0.07222222222222222,
+  "latency_p50_ms": 0.027399999453336932,
+  "latency_p95_ms": 0.03300000025774352,
+  "per_label": {
+    "树": {
+      "n": 120,
+      "correct": 120,
+      "wrong": 0,
+      "miss": 0
+    },
+    "兔子": {
+      "n": 120,
+      "correct": 120,
+      "wrong": 0,
+      "miss": 0
+    },
+    "太阳": {
+      "n": 120,
+      "correct": 120,
+      "wrong": 0,
+      "miss": 0
+    },
+    "房子": {
+      "n": 40,
+      "correct": 40,
+      "wrong": 0,
+      "miss": 0
+    },
+    "云": {
+      "n": 40,
+      "correct": 40,
+      "wrong": 0,
+      "miss": 0
+    },
+    "小鸟": {
+      "n": 40,
+      "correct": 40,
+      "wrong": 0,
+      "miss": 0
+    },
+    "胡萝卜": {
+      "n": 40,
+      "correct": 40,
+      "wrong": 0,
+      "miss": 0
+    },
+    "花": {
+      "n": 40,
+      "correct": 40,
+      "wrong": 0,
+      "miss": 0
+    },
+    "蘑菇": {
+      "n": 40,
+      "correct": 40,
+      "wrong": 0,
+      "miss": 0
+    }
+  },
+  "confusion": {
+    "树": {
+      "树": 120
+    },
+    "兔子": {
+      "兔子": 120
+    },
+    "太阳": {
+      "太阳": 120
+    },
+    "房子": {
+      "房子": 40
+    },
+    "云": {
+      "云": 40
+    },
+    "小鸟": {
+      "小鸟": 40
+    },
+    "胡萝卜": {
+      "胡萝卜": 40
+    },
+    "花": {
+      "花": 40
+    },
+    "蘑菇": {
+      "蘑菇": 40
+    }
+  },
+  "missing": {}
+}

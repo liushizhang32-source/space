@@ -1,0 +1,67 @@
+{
+  "schema_version": "1.0",
+  "book_id": "book01",
+  "page_id": "book01_p01",
+  "page_no": 1,
+  "status": "ok",
+  "image_width": 1240,
+  "image_height": 1754,
+  "description": "小兔子在森林里发现胡萝卜，高兴地跳起来。",
+  "objects": [
+    {
+      "object_id": "book01_p01_o01",
+      "label": "树",
+      "bbox": [
+        124,
+        351,
+        434,
+        965
+      ],
+      "confidence": 0.75
+    },
+    {
+      "object_id": "book01_p01_o02",
+      "label": "兔子",
+      "bbox": [
+        558,
+        526,
+        744,
+        877
+      ],
+      "confidence": 0.75
+    },
+    {
+      "object_id": "book01_p01_o03",
+      "label": "胡萝卜",
+      "bbox": [
+        806,
+        702,
+        930,
+        877
+      ],
+      "confidence": 0.75
+    },
+    {
+      "object_id": "book01_p01_o04",
+      "label": "太阳",
+      "bbox": [
+        930,
+        123,
+        1116,
+        263
+      ],
+      "confidence": 0.75
+    }
+  ],
+  "scene_tags": [
+    "森林",
+    "胡萝卜",
+    "太阳",
+    "小兔子"
+  ],
+  "safety": {
+    "pass": true,
+    "flags": []
+  },
+  "elapsed_ms": 24240
+}

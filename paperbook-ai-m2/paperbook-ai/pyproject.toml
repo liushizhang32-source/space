@@ -1,0 +1,23 @@
+[project]
+name = "paperbook-ai"
+version = "0.1.0"
+description = "纸书智伴：纸质绘本多模态互动化与 AI 伴读"
+requires-python = ">=3.10"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
