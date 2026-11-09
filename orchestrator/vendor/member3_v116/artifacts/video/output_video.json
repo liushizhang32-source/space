@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "book_id": "book01",
+  "page_id": "book01_p03",
+  "page_no": 3,
+  "status": "ok",
+  "video_url": "http://127.0.0.1:8000/videos/book01_p03_video.mp4",
+  "duration_sec": 7.636,
+  "resolution": "720x1280",
+  "fps": 25,
+  "segments": [
+    {
+      "segment_id": "book01_p03_s01",
+      "start_sec": 0.0,
+      "end_sec": 4.091
+    },
+    {
+      "segment_id": "book01_p03_s02",
+      "start_sec": 4.091,
+      "end_sec": 7.636
+    }
+  ],
+  "elapsed_ms": 799
+}

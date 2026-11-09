@@ -1,0 +1,4 @@
+StoryDoc 校验通过（status=ok）
+segments=2 duration=7.636 model=mock-template
+scene 非空=True
+highlight=[['book01_p03_o01'], []] safety_flags=[]

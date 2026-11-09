@@ -1,0 +1,23 @@
+{
+    "programs": [
+
+    ],
+    "stream_groups": [
+
+    ],
+    "streams": [
+        {
+            "codec_name": "mp3",
+            "codec_type": "audio",
+            "sample_rate": "24000",
+            "channels": 1,
+            "r_frame_rate": "0/0"
+        }
+    ],
+    "format": {
+        "format_name": "mp3",
+        "duration": "4.091000",
+        "size": "25148",
+        "bit_rate": "49177"
+    }
+}
