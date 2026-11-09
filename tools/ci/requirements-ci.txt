@@ -1,0 +1,2 @@
+# Workflow syntax validation only; application versions remain target-owned.
+PyYAML==6.0.3
