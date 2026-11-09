@@ -18,8 +18,12 @@
 - `--repo-root` 会自动探测 `<root>` 与 `<root>/src` 两种布局，并插到 `sys.path`；
 - 成功产物验收按 `*_ocr.json` 与 `*_vlm.json` 的**并集**枚举页，
   只有单侧文件的页也会被列出来并按缺文件判失败；
-- 逐页核对：单个产物先过公共模型，再核对 `page_id` 与文件名一致；
-  成对时再核对 `book_id` / `page_no` / `image_width` / `image_height` 两侧一致；
+- 逐页核对：单个产物先过**严格整数预检**、再过公共模型，然后核对 `page_id`
+  与文件名一致；成对时再核对 `book_id` / `page_no` / `image_width` /
+  `image_height` 两侧一致；
+- 为什么要有严格整数预检：公共模型如果把 `bbox` 声明成普通 `int`，pydantic
+  宽松模式会把 `1.0`、`True`、`"1"` 静默收成 `1`（只拒绝 `1.5`）。契约要求
+  原图像素整数，所以这里不依赖模型去拦，自己按 `type(v) is int` 再查一遍；
 - 会打印公共模型文件路径与 SHA-256，便于把“验的是哪版契约”写进证据；
 - 只读公共模型，不修改、不复制、不要求对方目录为脚本让路。
 """
@@ -100,6 +104,33 @@ def _validate(model, doc: dict) -> list[str]:
         except Exception as exc:  # noqa: BLE001
             return [str(exc)]
     return [f"{model} 不支持 model_validate / parse_obj"]
+
+
+def _strict_int_bbox_errors(doc: dict) -> list[str]:
+    """按契约做严格整数预检，不依赖公共模型的宽松/严格设置。
+
+    公共模型若用普通 `int`，pydantic 宽松模式会接受 `1.0` / `True` / `"1"`
+    并静默取整；这类坐标一旦进库就无法区分真实像素与四舍五入值。契约要求
+    bbox 是原图像素整数，所以这里显式拒绝一切非 `int`（含 `bool`）。
+    """
+    errors: list[str] = []
+    for key in ("text_blocks", "objects"):
+        items = doc.get(key)
+        if not isinstance(items, list):
+            continue
+        for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                continue
+            bbox = item.get("bbox")
+            if not isinstance(bbox, (list, tuple)):
+                continue
+            for position, value in enumerate(bbox):
+                if isinstance(value, bool) or not isinstance(value, int):
+                    errors.append(
+                        f"{key}[{index}].bbox[{position}]={value!r} 不是整数"
+                        f"（{type(value).__name__}）：公共模型会宽松取整，契约要求原图像素整数"
+                    )
+    return errors
 
 
 def _sha256_file(path: str | Path) -> str:
@@ -213,6 +244,13 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"[FAIL] {page} {kind}.json 无法读取或不是合法 JSON")
                 continue
             checked += 1
+            strict_errors = _strict_int_bbox_errors(doc)
+            if strict_errors:
+                failed += 1
+                print(f"[FAIL] {page} {kind}.json 坐标类型不符合契约")
+                for line in strict_errors[:6]:
+                    print(f"       {line}")
+                continue
             errors = _validate(model, doc)
             if errors:
                 failed += 1

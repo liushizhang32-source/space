@@ -212,9 +212,9 @@ V5 结论 B，两条主要问题：**严格整数负例被弱化**（1.0 → 1.5
 
 - `tests/test_public_checker.py` 恢复 `1.0`，保留 `1.5`，并按 OCR / VLM 两侧参数化加入 `True`、`"1"`；
   共 `2 × 4 = 8` 项。断言仍是“检查器必须退出 1”。
-- 理由（承认上一版判断错误）：公共坐标是 `StrictInt`，`1.0` 本来就该被拒；
-  只测 `1.5` 无法区分 strict 与 lax —— 宽松模型会收下 `1.0`、`True`、`"1"`，
-  而 `1.5` 在两种模式下都被拒，等于把“识别旧宽松模型”的能力让掉了。
+- 理由（承认上一版判断错误）：契约要求 bbox 是**原图像素整数**，`1.0` / `True` / `"1"` 都不该通过；
+  只测 `1.5` 区分不了 strict 与 lax —— `1.5` 在两种模式下都被拒，等于把“识别宽松取整”的能力让掉了。
+  至于公共模型到底是 `StrictInt` 还是普通 `int`，第一次 CI 给出了答案，见 §8.6。
 - 现在把“实际用的是哪版契约”写进证据：`validate_with_orchestrator.py` 打印
   `OCRData ← <路径>  sha256=<文件 SHA>`、`VLMData ← …`；workflow 新增
   `Record schema provenance` 步骤，打印 `commit=<git rev-parse HEAD>`、`ref/event`、Python 版本，
@@ -256,3 +256,57 @@ V5 结论 B，两条主要问题：**严格整数负例被弱化**（1.0 → 1.5
 - F05：`docs/ISOLATED_TEST.md` 统一口径——`run_all` = 旧 86 项（不需要 pytest）、
   `pytest tests` = 全量（86 + 检查器回归 22 = **108**）、隔离自检 = 13；
   退出码 2 表示**未验证**，CI 里任何非零退出都算失败，不存在“退出 2 但 CI 绿”。
+
+### 8.6 首次 CI 复盘：仓库里的公共模型其实是“宽松 int”（2026-11-09）
+
+commit `650c30e`（分支 `zhc`）第一次跑新版门禁，结果 **失败**：
+`6 failed, 102 passed in 1.64s`。
+
+失败的 6 项全部是严格整数用例，报错都是 `assert 0 == 1`（检查器放行）：
+
+```
+FAILED tests/test_public_checker.py::test_non_strict_integer_bbox_is_failure[1.0-ocr]
+FAILED tests/test_public_checker.py::test_non_strict_integer_bbox_is_failure[1.0-vlm]
+FAILED tests/test_public_checker.py::test_non_strict_integer_bbox_is_failure[True-ocr]
+FAILED tests/test_public_checker.py::test_non_strict_integer_bbox_is_failure[True-vlm]
+FAILED tests/test_public_checker.py::test_non_strict_integer_bbox_is_failure['1'-ocr]
+FAILED tests/test_public_checker.py::test_non_strict_integer_bbox_is_failure['1'-vlm]
+```
+
+`1.5` 的 4 项**通过**（被正确拒绝）。这个组合说明一件事：CI 实际加载的
+`orchestrator/schemas` 里 bbox 是**普通 `int`**，pydantic 宽松模式把
+`1.0`、`True`（→1）、`"1"`（→1）静默接受，只拒绝带小数的 `1.5`。
+本机 pydantic 2.14.2 可复现同样行为：
+
+```
+1.0  -> ACCEPT [1, 10, 20, 30]
+1.5  -> REJECT  int_from_float
+True -> ACCEPT [1, 10, 20, 30]
+'1'  -> ACCEPT [1, 10, 20, 30]
+```
+
+也就是说，V5 的 F01 判断（“公共坐标是 `StrictInt`，1.0 本来就该被拒”）
+与 `zhc` 分支上这份公共模型的实际行为不一致。两种可能：V5 读的是另一版
+`schema`，或该分支的 `orchestrator/schemas` 尚未同步到 `dev`。具体是哪一版，
+以 workflow 的 `Record schema provenance` 步骤（`commit` + 两个 schema 文件的
+`sha256`）为准，不再靠推断。
+
+**处理方式（不改公共 Schema）：** 在检查器里加了一层与模型无关的严格整数预检
+`_strict_int_bbox_errors()`：对 `text_blocks[].bbox` 与 `objects[].bbox` 逐个元素判
+`isinstance(v, bool) or not isinstance(v, int)`，命中即 `[FAIL]`，不再让模型去兜底。
+这样不论公共模型将来收紧还是保持宽松，我们的门禁都能稳定拒绝 `1.0 / True / "1"`。
+
+**复测（本机）：**
+
+| 用例 | 结果 |
+|---|---|
+| 宽松仿真模型（`_lax.py`，行为同上）+ 干净样本 | `2 页、4 个产物全部通过`，rc=0 |
+| 同上，bbox[0] 改为 `1.0` / `1.5` / `true` / `"1"` | 4 种都 `[FAIL] … 坐标类型不符合契约`，rc=1 |
+| 严格仿真契约（`.tmpcheck\space`）干净样本 / `1.0` | rc=0 / rc=1（行为一致） |
+| `python tests/run_all.py` | `86 passed, 0 failed` |
+| `python scripts/isolated_check.py` | `13/13 通过` |
+
+> 给队长的提示：公共模型当前对 bbox 是宽松 `int`，跨模块传来的 `1.0`
+> 或 `"1"` 会被静默取整成 `1`，`True` 会变成 `1`。M2 侧不改公共 Schema，
+> 但如果要彻底消除这类输入，需要 M1 在 `orchestrator/schemas` 里确认是否收紧为
+> `StrictInt`；无论是否收紧，M2 的门禁都按严格整数验收。
