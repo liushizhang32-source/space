@@ -28,6 +28,15 @@ jobs:
         run: python -m pip install -r "${{ steps.locate.outputs.dir }}/requirements-test.txt" "pydantic>=2.11,<3"
       - name: Prepare logs
         run: mkdir -p m2-logs
+      - name: Record schema provenance
+        run: |
+          set -euo pipefail
+          {
+            echo "[INFO] commit=$(git rev-parse HEAD)"
+            echo "[INFO] ref=${{ github.ref }} event=${{ github.event_name }}"
+            python -V 2>&1
+            sha256sum orchestrator/schemas/ocr.py orchestrator/schemas/vlm.py
+          } | tee m2-logs/provenance.log
       - name: Unit and checker regressions
         working-directory: ${{ steps.locate.outputs.dir }}
         env:
@@ -51,3 +60,4 @@ jobs:
         with:
           name: m2-check-logs
           path: m2-logs/
+
