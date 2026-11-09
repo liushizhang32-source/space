@@ -243,6 +243,16 @@ def main(argv: list[str] | None = None) -> int:
                 failed += 1
                 print(f"[FAIL] {page} {kind}.json 无法读取或不是合法 JSON")
                 continue
+            if not isinstance(doc, dict):
+                # 合法 JSON 不等于合法产物：`[]`、`null`、`"x"`、`42` 都要按
+                # “错误数据结构”计失败，而不是让后面的 doc.get 抛 AttributeError
+                # 中断整批验收。
+                failed += 1
+                print(
+                    f"[FAIL] {page} {kind}.json 顶层不是 JSON 对象"
+                    f"（{type(doc).__name__}）；契约要求对象，已跳过该文件"
+                )
+                continue
             checked += 1
             strict_errors = _strict_int_bbox_errors(doc)
             if strict_errors:

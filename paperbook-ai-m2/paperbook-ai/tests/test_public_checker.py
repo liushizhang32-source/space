@@ -72,6 +72,23 @@ def clone_page(docs, kind, new_page, **overrides):
     save(docs / f"{new_page}_{kind}.json", doc)
 
 
+def repage(doc, kind, new_page):
+    """把产物整体改写成另一页：内容身份全部自洽，只把文件名留在原页。
+
+    用于验证“内部合法但放错文件名”的负例——公共模型会接受这种文档，
+    只有检查器自己核对文件名时才能发现，因此能真正覆盖新增判断。
+    """
+    old_page = doc["page_id"]
+    doc["page_id"] = new_page
+    doc["book_id"] = new_page.rsplit("_p", 1)[0]
+    doc["page_no"] = int(new_page.rsplit("_p", 1)[1])
+    key = "text_blocks" if kind == "ocr" else "objects"
+    id_key = "block_id" if kind == "ocr" else "object_id"
+    for item in doc.get(key, []):
+        item[id_key] = item[id_key].replace(old_page + "_", new_page + "_", 1)
+    return doc
+
+
 # ---------------------------------------------------------------- 基本完备性
 
 
@@ -144,12 +161,41 @@ def test_orphan_ocr_in_mixed_dir_is_detected(checker, source_root, docs):
 # --------------------------------------------- 文件名 / 配对身份 / 尺寸一致
 
 
-def test_page_id_mismatch_is_failure(checker, source_root, docs):
-    path = docs / "book01_p01_vlm.json"
-    doc = load(path)
-    doc["page_id"] = "book02_p01"
-    save(path, doc)
+@pytest.mark.parametrize("kind", ["ocr", "vlm"])
+def test_internally_valid_other_page_under_wrong_filename(
+    checker, source_root, docs, kind, capsys
+):
+    """内容自称 book02_p01、身份字段全部自洽，却存成 book01_p01_*。
+
+    公共模型会接受这份文档（内部不矛盾），因此只有“文件名 vs page_id”
+    这一步能拦住它——这才是 F03 新增检查的有效回归。
+    """
+    path = docs / f"book01_p01_{kind}.json"
+    save(path, repage(load(path), kind, "book02_p01"))
     assert run_page(checker, source_root, docs) == 1
+    out = capsys.readouterr().out
+    assert "与文件名不一致" in out, out
+
+
+@pytest.mark.parametrize("kind", ["ocr", "vlm"])
+@pytest.mark.parametrize("payload", ["[]", "null", '"text"', "42"])
+def test_non_object_json_is_failure(checker, source_root, docs, kind, payload, capsys):
+    """合法 JSON 但不是对象（数组 / null / 字符串 / 数字）必须计失败。"""
+    (docs / f"book01_p01_{kind}.json").write_text(payload, encoding="utf-8")
+    assert run_page(checker, source_root, docs) == 1
+    out, err = capsys.readouterr()
+    assert "顶层不是 JSON 对象" in out, out
+    assert "Traceback" not in out + err
+
+
+def test_non_object_json_does_not_stop_other_pages(checker, source_root, docs, capsys):
+    """一个坏页不能中断整批：同目录的合法页仍要被检查并 PASS。"""
+    save(docs / "book02_p01_ocr.json", repage(load(docs / "book01_p01_ocr.json"), "ocr", "book02_p01"))
+    (docs / "book02_p01_vlm.json").write_text("[]", encoding="utf-8")
+    assert run_dir(checker, source_root, docs) == 1
+    out = capsys.readouterr().out
+    assert "[PASS] book01_p01 ocr.json" in out, out
+    assert "[PASS] book01_p01 vlm.json" in out, out
 
 
 @pytest.mark.parametrize("field", ["book_id", "page_no", "image_width", "image_height"])

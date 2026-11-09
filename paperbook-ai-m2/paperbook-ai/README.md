@@ -21,7 +21,7 @@
 
 ```bash
 # 0) 配置：复制后按需改（.env 不入库）
-copy .env.example .env          # 默认已设 VISION_OCR_BACKEND=paddle
+copy .env.example .env          # 模板默认全走 stub，真实后端按注释解开
 
 # 1) 环境自检（Python/依赖/后端/DATA_DIR/冒烟一次看完）
 python scripts/check_env.py
@@ -66,13 +66,13 @@ contract  : ok
 
 | 步骤 | 命令 | 覆盖 |
 |---|---|---|
-| 1 | `python -m pytest tests -q` | 108 条；`SCHEMA_REPO_ROOT` 指向仓库根，用**真实**的 `orchestrator/schemas` |
+| 1 | `python -m pytest tests -q` | 118 条；`SCHEMA_REPO_ROOT` 指向仓库根，用**真实**的 `orchestrator/schemas` |
 | 2 | `python scripts/isolated_check.py` | 13 项隔离自检（含超时→2002 映射） |
 | 3 | `validate_with_orchestrator.py --repo-root . --from samples/example` | 公共 Schema 验收：缺文件、坏 JSON、文件名/配对身份/尺寸不符都算失败 |
 | 4 | `git rev-parse HEAD` + `sha256sum orchestrator/schemas/*.py` | 记录这次验的 commit 与契约文件 SHA-256 |
 
 依赖由 `requirements-test.txt` 提供（`-r requirements.txt` + pytest + opencv-headless）。
-本地没装 pytest 时用 `python tests/run_all.py`（86 条，零第三方依赖，不含校验器回归）。
+本地没装 pytest 时用 `python tests/run_all.py`（86 条，不需要 pytest；仍需 Pillow / NumPy 等运行依赖，且不含校验器回归）。
 
 ## 物体索引与点读
 
@@ -199,3 +199,5 @@ python run.py --image x.jpg --book-id book01 --page-no 1 --vlm-backend http
 ```
 
 契约冻结规则：只许新增可选字段，禁止改名/改类型/改必填性（见 `docs/API_v1.0.md`）。
+
+

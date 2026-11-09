@@ -90,22 +90,23 @@ python scripts/isolated_check.py
 
 ```
 python tests/run_all.py      →  86 passed, 0 failed     # 本机已跑，无 pytest 也能跑（不含校验器回归）
-python -m pytest tests -q    →  108 passed              # 全量：86 + 校验器回归 22；CI 执行
+python -m pytest tests -q    →  118 passed              # 全量：86 + 校验器回归 32；CI 执行
 ```
 
 | 入口 | 依赖 | 覆盖 |
 |---|---|---|
 | `tests/run_all.py` | 仅 Pillow / NumPy | 86 条既有用例（旧入口） |
-| `pytest tests` | + pytest、opencv（`requirements-test.txt`） | 86 条 + `test_public_checker.py` 22 项 |
+| `pytest tests` | + pytest、opencv（`requirements-test.txt`） | 86 条 + `test_public_checker.py` 32 项 |
 
 `test_public_checker.py` 需要 `SCHEMA_REPO_ROOT` 指向带 `orchestrator/schemas` 的仓库根，
 否则它自己会 `pytest.fail`（未验证不算通过）。CI 里已由 workflow 设置。
 
-校验器回归 22 项的构成：基本完备性 5、严格整数负例 8（OCR/VLM × `1.0`/`1.5`/`True`/`"1"`）、
+校验器回归 32 项的构成：基本完备性 5、严格整数负例 8（OCR/VLM × `1.0`/`1.5`/`True`/`"1"`）、
 坏 JSON 1、缺公共模型 1、目录枚举盲区 2（混合目录里只有 VLM / 只有 OCR）、
-文件名与内容不符 1、配对身份/尺寸不一致 4。
+顶层非对象 8（`[]`/`null`/字符串/整数 × OCR/VLM）、坏页不拦好页 1、
+文件名与内容不符 2（OCR/VLM，内容内部自洽、只由文件名检查拦下）、配对身份/尺寸不一致 4。
 
-严格整数这 8 项第一次上 CI 时**红过**：仓库里那份公共模型实际是**宽松 `int`**，
+严格整数这 8 项第一次上 CI 时**红过**：`zhc` 分支 Head 那份公共模型实际是**宽松 `int`**（`dev` 与 PR 合并预览已是 `StrictInt`），
 会接受 `1.0`、`True`、`"1"`（只拒 `1.5`）。因此检查器加了一层与模型无关的
 `_strict_int_bbox_errors()` 预检，按 `type(v) is int` 显式拒绝；改完后这些用例
 不依赖公共模型是 strict 还是 lax。详细证据见 `docs/RUN_REPORT.md` §8.6。
@@ -119,7 +120,7 @@ python -m pytest tests -q    →  108 passed              # 全量：86 + 校验
    - **run #5（新 workflow，zhc，19s）**：`pytest` **94 passed in 2.09s**、
      `结论：2 页、4 个产物全部通过公共 Schema 校验`、
      `OCRData ← /home/runner/work/space/space/orchestrator/schemas/ocr.py`；
-   - 第五轮评审（V5）后扩到 **108 项**并新增 provenance 记录，
+   - 第七轮评审（V7）后扩到 **118 项**（V5 时为 108）并新增 provenance 记录，
      本轮复跑结果以 Actions 日志与 `m2-check-logs` artifact 为准（含 `commit` 与 Schema 文件 SHA-256）。
    仍未覆盖真实绘本与更复杂版式。
 2. **真实 Paddle / VLM / 真实绘本未验证**：质量、耗时、阅读顺序均无实测。
@@ -142,3 +143,4 @@ python tests/run_all.py
 git clone https://github.com/<组织>/<仓库>.git C:\code\space
 python scripts/validate_with_orchestrator.py --repo-root C:\code\space --all --data-dir data
 ```
+

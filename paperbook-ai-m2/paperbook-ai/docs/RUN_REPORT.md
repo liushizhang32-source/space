@@ -185,7 +185,7 @@ python paperbook-ai-m2\paperbook-ai\scripts\validate_with_orchestrator.py `
 | 文件 | 变化 |
 |---|---|
 | `scripts/validate_with_orchestrator.py` | **校验器改为验收语义**：缺 `ocr`/`vlm` 任一文件、坏 JSON、`checked==0` 均退出 1 |
-| `tests/test_public_checker.py` | 校验器回归（`SCHEMA_REPO_ROOT` 必填）；第五轮后扩到 22 项 |
+| `tests/test_public_checker.py` | 校验器回归（`SCHEMA_REPO_ROOT` 必填）；第七轮后扩到 32 项 |
 | `requirements-test.txt` | pytest + `opencv-python-headless==5.0.0.93` |
 | `.github/workflows/m2-vision-checks.yml` | 改用 `pytest tests`，公共校验作为硬门禁（`set -euo pipefail`） |
 
@@ -247,14 +247,14 @@ V5 结论 B，两条主要问题：**严格整数负例被弱化**（1.0 → 1.5
 | 旧 runner | `python tests/run_all.py` | `86 passed, 0 failed` |
 | 隔离自检 | `python scripts/isolated_check.py` | `13/13 通过` |
 
-> 说明：本机没有 pytest、也没有真实 `orchestrator/schemas`，上表的严格整数项用**本地仿真契约**（StrictInt 语义 + 递归 bbox 检查）验证“检查器会正确判失败”；真实公共模型下的 108 项由 CI 执行，日志见 Actions artifact `m2-check-logs`。
+> 说明：本机没有 pytest、也没有真实 `orchestrator/schemas`，上表的严格整数项用**本地仿真契约**（StrictInt 语义 + 递归 bbox 检查）验证“检查器会正确判失败”；真实公共模型下的 118 项由 CI 执行，日志见 Actions artifact `m2-check-logs`。
 
 ### 8.5 F04 / F05 文档与边界
 
 - F04：`examples/consume_vision.py` 头部改成明确的**草稿**声明——缺 `StoryData` 必填字段（至少 `model`），
   不得当正式 C3 交付；M2 的交付边界仍是 `*_ocr.json` / `*_vlm.json`。
 - F05：`docs/ISOLATED_TEST.md` 统一口径——`run_all` = 旧 86 项（不需要 pytest）、
-  `pytest tests` = 全量（86 + 检查器回归 22 = **108**）、隔离自检 = 13；
+  `pytest tests` = 全量（86 + 检查器回归 32 = **118**）、隔离自检 = 13；
   退出码 2 表示**未验证**，CI 里任何非零退出都算失败，不存在“退出 2 但 CI 绿”。
 
 ### 8.6 首次 CI 复盘：仓库里的公共模型其实是“宽松 int”（2026-11-09）
@@ -273,9 +273,9 @@ FAILED tests/test_public_checker.py::test_non_strict_integer_bbox_is_failure['1'
 FAILED tests/test_public_checker.py::test_non_strict_integer_bbox_is_failure['1'-vlm]
 ```
 
-`1.5` 的 4 项**通过**（被正确拒绝）。这个组合说明一件事：CI 实际加载的
-`orchestrator/schemas` 里 bbox 是**普通 `int`**，pydantic 宽松模式把
-`1.0`、`True`（→1）、`"1"`（→1）静默接受，只拒绝带小数的 `1.5`。
+`1.5` 的 2 项（OCR / VLM 各 1）**通过**（被正确拒绝）。这个组合说明一件事：
+`zhc` 分支 Head 上的 `orchestrator/schemas` 里 bbox 是**普通 `int`**，pydantic
+宽松模式把 `1.0`、`True`（→1）、`"1"`（→1）静默接受，只拒绝带小数的 `1.5`。
 本机 pydantic 2.14.2 可复现同样行为：
 
 ```
@@ -285,11 +285,16 @@ True -> ACCEPT [1, 10, 20, 30]
 '1'  -> ACCEPT [1, 10, 20, 30]
 ```
 
-也就是说，V5 的 F01 判断（“公共坐标是 `StrictInt`，1.0 本来就该被拒”）
-与 `zhc` 分支上这份公共模型的实际行为不一致。两种可能：V5 读的是另一版
-`schema`，或该分支的 `orchestrator/schemas` 尚未同步到 `dev`。具体是哪一版，
-以 workflow 的 `Record schema provenance` 步骤（`commit` + 两个 schema 文件的
-`sha256`）为准，不再靠推断。
+需要把两个 Git 版本分开看，不能混为一谈：
+
+| 来源 | bbox 类型 | 说明 |
+|---|---|---|
+| `zhc` 分支 Head（push 触发的那次 CI） | 普通 `int`（宽松） | 本节的 6 红就发生在这里 |
+| `dev` 与 PR #3 的合并预览（`pull_request` 触发） | **`StrictInt`** | 评审直接读取合并预览树确认 |
+
+所以准确说法是：**旧 `zhc` Head 上的公共模型是宽松 `int`**；当前稳定的 `dev`
+公共模型已经是 `StrictInt`。两者是不同 Git 版本的文件，不能用前者推断后者。
+M1 不需要、也不应该为了适配旧分支去改冻结的 Schema。
 
 **处理方式（不改公共 Schema）：** 在检查器里加了一层与模型无关的严格整数预检
 `_strict_int_bbox_errors()`：对 `text_blocks[].bbox` 与 `objects[].bbox` 逐个元素判
@@ -306,7 +311,165 @@ True -> ACCEPT [1, 10, 20, 30]
 | `python tests/run_all.py` | `86 passed, 0 failed` |
 | `python scripts/isolated_check.py` | `13/13 通过` |
 
-> 给队长的提示：公共模型当前对 bbox 是宽松 `int`，跨模块传来的 `1.0`
-> 或 `"1"` 会被静默取整成 `1`，`True` 会变成 `1`。M2 侧不改公共 Schema，
-> 但如果要彻底消除这类输入，需要 M1 在 `orchestrator/schemas` 里确认是否收紧为
-> `StrictInt`；无论是否收紧，M2 的门禁都按严格整数验收。
+> 给队长的提示：**旧 `zhc` Head** 对 bbox 是宽松 `int`，跨模块传来的 `1.0`
+> 或 `"1"` 会被静默取整成 `1`，`True` 会变成 `1`；当前 `dev` 已是 `StrictInt`，
+> 不需要改动冻结 Schema。M2 侧无论公共模型松开还是收紧，门禁都按严格整数验收。
+
+### 8.7 修复后的 CI 结果链（2026-11-09）
+
+| run | 触发 | 结果 | 说明 |
+|---|---|---|---|
+| #13 | push `26cba5a` | 红（`6 failed, 102 passed`） | 修复文件被传到 `space/paperbook-ai/paperbook-ai-m2/paperbook-ai/`，根模块没被改到；见下方“上传路径坑” |
+| #15 | push `232bc14` | **绿（23s）** | 文件落到正确的 `paperbook-ai-m2/paperbook-ai/`；`pytest` 全绿（含 32 项检查器回归），`Public Schema gate` 通过 4 个产物 |
+| #17 | push `8ef045f7125fa95de729e3e1f93451047dd9980d` `Delete paperbook-ai directory` | **绿（23s）** | 删除误传残片后仍全绿，证明清理没有破坏门禁 |
+| #18 | PR #3 synchronize | **绿（25s）** | PR 侧同样通过 |
+
+> **上传路径坑（已记入交接注意）**：GitHub 的 “Upload files” 页面路径是**相对你当前所在目录**的。
+> 当时浏览器停在 `space/paperbook-ai/`，拖入 `paperbook-ai-m2` 后文件落成
+> `space/paperbook-ai/paperbook-ai-m2/paperbook-ai/...`，列表显示的 `/paperbook-ai-m2/...`
+> 也是相对路径，看起来完全正确。结果 CI 读的仍是仓库根那份旧代码，于是同一批 6 条红重复出现。
+> 判断办法：提交前确认浏览器面包屑在**仓库根**（只显示 `space /`），列表路径与仓库树逐级对得上。
+> 该残片已在本轮删除（commit `8ef045f7125fa95de729e3e1f93451047dd9980d`），根目录现在只有 `.github/`、`docs/`、
+> `orchestrator/`、`paperbook-ai-m2/`、`README.md`。
+
+**run #17 的 `Record schema provenance` 原始输出**（对应 commit `8ef045f7125fa95de729e3e1f93451047dd9980d`）：
+
+```
+[INFO] commit=8ef045f7125fa95de729e3e1f93451047dd9980d
+[INFO] ref=refs/heads/zhc event=push
+Python 3.12.16
+（两行 sha256sum 输出：orchestrator/schemas/ocr.py、vlm.py）
+```
+
+> 两个 schema 文件的 SHA-256 **不在这里手工转录**：上一版文档里的哈希是照着截图
+> 手抄的，字符有错位（评审 R7-04 已指出）。权威值以 run #17 页面底部
+> `Artifacts → m2-check-logs` 里的 `provenance.log` 为准，逐字节复制。
+> 本包附带的 `docs/logs/` 里不含该文件（它只存在于 CI 产物中）。
+
+这五行就是“CI 到底验了哪一版公共契约”的硬证据：commit 固定、Python 版本固定、
+两个 schema 文件的 SHA-256 固定。评审若要复现，只要 checkout 这个 commit，
+`sha256sum orchestrator/schemas/{ocr,vlm}.py` 对得上即可。
+
+## 8.8 第七轮评审（V7）四项修复（2026-11-09）
+
+V7 结论 B，确认 F01–F05 已落实，另提 4 项收尾。逐条处理如下。
+
+| 编号 | 问题 | 修复 | 本机证据 |
+|---|---|---|---|
+| R7-01 | 检查器遇 `[]`、`null` 等非对象 JSON 会抛未处理异常 | `validate_with_orchestrator.py` 在 `json.loads` 后加 `isinstance(doc, dict)` 守卫，判 `[FAIL] … 顶层不是 JSON 对象（list）` 后 `continue`，不计入成功 | `[]` → rc=1，无 Traceback；同目录好页仍 `[PASS]` |
+| R7-02 | 文件名错配负例被公共模型提前拒绝，没覆盖到新增检查 | 新 helper `repage()` 把文档整体改成另一页（含 `block_id`/`object_id` 前缀），内容自洽、只与文件名不符 | book02 内容存成 `book01_p01_vlm.json` → rc=1，打印 `与文件名不一致` |
+| R7-03 | 缺 README 要求复制的 `.env.example` | 补回 `.env.example`（全 stub 默认、真实后端注释、无密钥）；README 同步说明 | 文件 902 B，`VISION_OCR_BACKEND=stub` |
+| R7-04 | 提交号、指纹、版本说明有笔误 | `8f045f1` → 完整 `8ef045f7…`；provenance 两行 SHA 不再手抄，改指 artifact；`1.5` 项数 4→2；补 Head(int) / dev(StrictInt) 对照 | 见 §8.6、§8.7 |
+
+回归：`tests/run_all.py` 86 passed、`scripts/isolated_check.py` 13/13、仿真契约 2 页 4 产物 rc=0；
+校验器回归由 22 项增至 32 项（全量 118）。
+
+## 9. 真实绘本首跑（2026-11-09，本机）
+
+> 目的：把“只在合成样本上验过”的缺口补上。本节只证明**流水线在真实页面上跑通**，
+> 不构成准确率结论（见 9.4 的取样限制）。
+
+### 9.1 输入
+
+| 项 | 值 |
+|---|---|
+| 文件 | `data/books/demo01/p01.png` |
+| 实际格式 / 尺寸 | WEBP（按内容识别），1080 × 1080 |
+| 大小 | 286,966 B |
+| 来源 | 电商页面的书内页照片（仅本机自测，未进 git、未进交付包） |
+
+注：扩展名是 `.png`、内容是 WEBP。PIL 按文件头识别，能正常读；下游产物里的
+`image_width/height` 取自实际解码尺寸。
+
+### 9.2 命令
+
+```powershell
+$env:PYTHONPATH="src"
+.\.venv\Scripts\python.exe -m vision.cli `
+  --image data\books\demo01\p01.png --book-id demo01 --page-no 1 `
+  --ocr-backend paddle --vlm-backend http --strict --data-dir data
+```
+
+`--strict`：后端不可用即失败，不回退 stub。
+
+### 9.3 结果
+
+| 阶段 | 结果 | 耗时 |
+|---|---|---|
+| OCR（PaddleOCR PP-OCRv5 mobile） | `status=ok`，8 个文本块，平均置信度 0.97 | 3,710 ms |
+| VLM（`qwen2.5vl:3b`，Ollama） | `status=ok`，3 个 objects，`safety.pass=true` | 2,815 ms |
+| 契约自检 | `contract: ok`，进程退出码 0 | — |
+| 公共 Schema 校验 | 1 页 2 产物 `[PASS]`，rc=0 | — |
+
+OCR 识别到的正文（原样）：
+
+```
+兔妈妈又说：“现在已经
+很晚了，你必须要睡觉了。”
+小兔子摇晃着脑袋说：
+“为什么我要睡觉呢？”
+```
+
+另外 3 个块是钟面数字 `3` / `6` 和左边缘被裁掉的残句（`色了。` / `妈，我`），
+与 9.4 的裁切说明一致。
+
+VLM 产物：`description=小兔子和兔妈妈在餐桌前讨论睡觉时间`，objects 为
+`兔子 [259,402,580,1032]`、`兔子 [691,179,1080,1032]`、`花 [442,389,562,582]`
+（坐标已换算回原图像素）。
+
+### 9.4 取样限制（不能当准确率）
+
+这张图是**电商详情页里的方形截图**，不是整页扫描：
+
+- 左右被裁，句子首尾缺失（所以出现 `色了。` 这种残句）；
+- 右下角有 `post.smzdm.com` 水印，可能被识别成噪声字符；
+- 页面有透视和反光，不是标准扫描条件。
+
+因此本节只能作为“真实图片能跑通 + 产物结构正确”的证据。要出准确率数字，
+需要整页扫描图 + 人工转写 GT，再走 `eval/metrics.py` 的 CER 流程。
+
+### 9.5 首跑暴露的两个真问题（已修）
+
+**问题 1：`qwen3-vl:4b` 是思考型模型，结构化输出不稳定。**
+首次用默认 `qwen3-vl:4b`（`QWEN_VL_MAX_TOKENS=4000`）时 VLM 阶段失败：
+
+```
+[STAGE] vlm 失败 code=2001 36179ms
+data/logs/demo01_p01_vlm.error.json:
+{"page_id":"demo01_p01","stage":"vlm","code":2001,"message":"RuntimeError","elapsed_ms":36179}
+```
+
+直接调用后端拿到真实原因：`VLM 只返回了思考内容、正文为空`（36 秒全花在思考上）。
+把 token 加到 8000 后，时好时坏——一次能出正文但 `VLM 返回非 JSON`，另一次仍然为空。
+结论：思考型模型不适合这里的“短 JSON、低延迟”场景。
+
+处理：`.env` 默认模型改为 `qwen2.5vl:3b`（非思考型），同一页 JSON 解析成功、耗时
+2.8 s；`qwen3-vl:4b` 保留为质量对照选项，但需要更大 token 且结果不稳定。
+
+**问题 2：VLM 把 prompt 里的示例值原样抄了出来。**
+改模型后第一次输出 `objects` 只有 1 个，`label` 竟是 `中文通用名词`——正是 prompt
+格式示例里的占位词，模型直接照抄。同时 `safety` 缺失，被 fail-closed 判成
+`{"pass": false, "flags": ["safety_missing"]}`（这个行为是对的，但等于每页都不安全）。
+
+处理（`src/vision/backends/qwen_vl.py`）：
+
+- 示例改成具体值 `"label": "兔子"`；
+- 规则 4 明确写“写画面里真实存在的东西……**不要照抄上面示例里的词**”。
+
+复跑后 objects 变成 `兔子 / 兔子 / 花`，`safety.pass=true`，`flags=[]`。
+
+### 9.6 回归
+
+改动只动了 prompt 文案，未动解析与契约逻辑：
+
+- `tests/run_all.py` → **86 passed, 0 failed**；
+- 真实页两件产物过严格仿真契约：`结论：1 页、2 个产物全部通过公共 Schema 校验`（rc=0）。
+
+### 9.7 下一步
+
+1. 换整页扫描/正拍图重跑，确认 bbox 与文字完整性；
+2. 覆盖不同版式（纯图页、满字页、大标题页、深色页）各 1–2 页，记录 `status` 与耗时波动；
+3. 有 GT 的页跑 `eval/run_batch.py` + `eval/metrics.py` 出 CER；
+4. 真实页结果稳定后，再把 §9 升级为“真实绘本评测”，并注明样本量。
+
+

@@ -143,7 +143,7 @@ git push -u origin zhc-1
 1. 在 GitHub 上对 `zhc-1 → dev` 开 Pull Request；
 2. 进 **Actions** 页，选 `m2-vision-checks`，看这次 run；
 3. 五个 step 的名字就是结论（与 `.github/workflows/m2-vision-checks.yml` 一一对应）：
-   - `Unit and checker regressions` → 期望 `108 passed`（`pytest tests`，含校验器回归；数字以日志为准）
+   - `Unit and checker regressions` → 期望 `118 passed`（`pytest tests`，含校验器回归；数字以日志为准）
    - `Isolated check` → 期望 `13/13 通过`
    - `Public Schema gate` → 期望 `[PASS] … 结论：N 页、M 个产物全部通过公共 Schema 校验`
    - `Record schema provenance` → 记录 `commit`、Python 版本、两个 Schema 文件的 SHA-256
@@ -151,7 +151,7 @@ git push -u origin zhc-1
 
 > 两套入口不要混：
 > - `python tests/run_all.py` = **旧 86 项**，零依赖、不需要 pytest，也不含 `test_public_checker.py`；
-> - `python -m pytest tests` = **全量**（86 + 检查器回归 22 = 108），需要 `pytest` 与 `SCHEMA_REPO_ROOT`。
+> - `python -m pytest tests` = **全量**（86 + 检查器回归 32 = 118），需要 `pytest` 与 `SCHEMA_REPO_ROOT`。
 
 也可以不开 PR，在 Actions 页点 **Run workflow**（`workflow_dispatch`）手动触发。
 
@@ -194,3 +194,4 @@ python scripts/validate_with_orchestrator.py --repo-root .. --from samples/examp
 | `05` 失败且 code=2001 | 超时异常链断了：检查是否有人把异常重新包成无 `__cause__` 的新异常 |
 | `08` 失败 | `image_width/height` 取了摆正后尺寸，而不是文件尺寸 |
 | `12` 失败 | 有失败页写下了 `status=failed` 的 vlm.json（违反 VLMData 枚举） |
+
