@@ -1,0 +1,12 @@
+{
+  "code": 0,
+  "msg": "ok",
+  "data": {
+    "audio_url": "http://127.0.0.1:8000/audios/tts_2e36d97e5cd9.mp3",
+    "duration_ms": 4091,
+    "sample_rate": 24000,
+    "cached": true,
+    "engine": "silent"
+  },
+  "trace_id": "tr_01M6WX24KMVP02W2AY4KB8APA2"
+}

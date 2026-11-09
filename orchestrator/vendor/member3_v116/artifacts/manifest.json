@@ -1,0 +1,113 @@
+{
+  "package": "paperbook-member3-generation",
+  "version": "1.1.6",
+  "branch": "wzy622-patch-1",
+  "generated_at": "2026-11-08T06:20:52+00:00",
+  "mock": {
+    "story": "mock-template",
+    "tts": "silent（静音）",
+    "video": "真实 ffmpeg 合成，静音轨"
+  },
+  "files": [
+    {
+      "path": "README.md",
+      "bytes": 1870,
+      "sha256": "f39a6623468b4e3c7146fc1f11df9e3abb12f4ec7ebd5f8e0cc910227831576f"
+    },
+    {
+      "path": "story/cli_stdout.json",
+      "bytes": 1227,
+      "sha256": "77149bc042a4a64d1858cb3df79c5e3507e2501ca186d7779a1157f7a7b751f5"
+    },
+    {
+      "path": "story/input_ocr.json",
+      "bytes": 724,
+      "sha256": "54c83302204e87f2eea4b7c031dfea58ec1ad636f438dfc2caf5be63a9cbf354"
+    },
+    {
+      "path": "story/input_page.png",
+      "bytes": 32274,
+      "sha256": "48ef22ff9778f0ca7b1ce85d2f1b4901a0fa451bb62b6112112a2b19364f6a41"
+    },
+    {
+      "path": "story/input_vlm.json",
+      "bytes": 786,
+      "sha256": "b613ed53046e4ae979f18d189712909be0a1722704cee72fb0e1d74027c61461"
+    },
+    {
+      "path": "story/output_story.json",
+      "bytes": 1227,
+      "sha256": "faa2c2704086f2ef91d0f839861e21e9ad244cd5632dd02f01dab7e88f2c5b85"
+    },
+    {
+      "path": "story/schema_check.txt",
+      "bytes": 156,
+      "sha256": "df3f1707343ba14f300811f81654689d5d3410fcd659fb557605c33919dd27fe"
+    },
+    {
+      "path": "tts/probe.json",
+      "bytes": 430,
+      "sha256": "534fbc464e65a0a4f09bba6458adcc3b01ba65734c012abe0a59b94b5d02e2b0"
+    },
+    {
+      "path": "tts/probe.txt",
+      "bytes": 430,
+      "sha256": "534fbc464e65a0a4f09bba6458adcc3b01ba65734c012abe0a59b94b5d02e2b0"
+    },
+    {
+      "path": "tts/request.json",
+      "bytes": 132,
+      "sha256": "96d88670196affa738f44cf8d0c840a870389dd53ac72cbe431c7918a744c906"
+    },
+    {
+      "path": "tts/response.json",
+      "bytes": 271,
+      "sha256": "b1b8ede7af8e5e9d231ac8a7c0d7480d7303497e1df2b88fa722112a527adddb"
+    },
+    {
+      "path": "tts/tts_sample.mp3",
+      "bytes": 25148,
+      "sha256": "6c9d38a6c80149dc87a202824981370b0738a722ef5888eb3bc3ecf503744d88"
+    },
+    {
+      "path": "video/book01_p03_video.mp4",
+      "bytes": 50149,
+      "sha256": "b16aaadcd56724a6a11743ebdb11df9522efd70cfb4c5632828ace7f4bbc6f49"
+    },
+    {
+      "path": "video/cli_stdout.json",
+      "bytes": 511,
+      "sha256": "e849ddb0cf5ae83c3a40040072af4e0dadac019aedeb6714f21b4cd21156cec9"
+    },
+    {
+      "path": "video/input_story.json",
+      "bytes": 1227,
+      "sha256": "faa2c2704086f2ef91d0f839861e21e9ad244cd5632dd02f01dab7e88f2c5b85"
+    },
+    {
+      "path": "video/output_video.json",
+      "bytes": 511,
+      "sha256": "efe48964b4a88603042a5e54d10f113760726ca1339818bfdc7cc4ed11747c0e"
+    },
+    {
+      "path": "video/probe.json",
+      "bytes": 636,
+      "sha256": "5a6288c4a3c1bc7fe6c88be8b8e78f1086cfbe45b11c5976ca0797849759f407"
+    },
+    {
+      "path": "video/probe.txt",
+      "bytes": 636,
+      "sha256": "5a6288c4a3c1bc7fe6c88be8b8e78f1086cfbe45b11c5976ca0797849759f407"
+    },
+    {
+      "path": "video/schema_check.txt",
+      "bytes": 72,
+      "sha256": "ce7e89569863d55ff63e7c06e558c25eca3de0f4321fd734a72c0750ee3077cd"
+    }
+  ],
+  "checks": {
+    "story_schema": "StoryDoc 通过",
+    "video_probe": "h264+aac 可解码",
+    "tts_probe": "mp3 24000Hz 可解码"
+  }
+}

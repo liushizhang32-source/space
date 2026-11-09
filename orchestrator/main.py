@@ -18,10 +18,15 @@ from orchestrator.services.storage import Storage
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
     storage = Storage(settings)
+    if settings.generation_backend == 'member3':
+        from orchestrator.services.member3_jobs import Member3Jobs
+        jobs_class = Member3Jobs
+    else:
+        jobs_class = Jobs
 
     @asynccontextmanager
     async def lifespan(app):
-        app.state.jobs = Jobs(storage)
+        app.state.jobs = jobs_class(storage)
         yield
         await app.state.jobs.close()
 

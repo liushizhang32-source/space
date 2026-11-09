@@ -1,0 +1,9 @@
+# 成员 3 模块（Story / TTS / Video）运行依赖
+# 实测版本：pydantic 2.14.2 / fastapi 0.162.0 / uvicorn 0.54.0 / Pillow 12.3.0
+pydantic>=2.9,<3
+fastapi>=0.115,<1
+uvicorn>=0.30
+pillow>=10
+
+# 开发/测试
+pytest>=8

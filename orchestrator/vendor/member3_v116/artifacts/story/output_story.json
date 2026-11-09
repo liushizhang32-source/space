@@ -1,0 +1,41 @@
+{
+  "schema_version": "1.0",
+  "book_id": "book01",
+  "page_id": "book01_p03",
+  "page_no": 3,
+  "title": "从前有只小兔子，住在森林边上",
+  "age_level": "3-6",
+  "status": "ok",
+  "segments": [
+    {
+      "segment_id": "book01_p03_s01",
+      "order": 1,
+      "narration": "从前有只小兔子，住在森林边上。",
+      "scene": "夜晚的森林，一只小兔子站在树下，月光洒在树梢。",
+      "duration_sec": 4.091,
+      "duration_source": "tts",
+      "audio_url": "http://127.0.0.1:8000/audios/tts_2e36d97e5cd9.mp3",
+      "highlight_object_ids": [
+        "book01_p03_o01"
+      ]
+    },
+    {
+      "segment_id": "book01_p03_s02",
+      "order": 2,
+      "narration": "一天晚上，它出门去找朋友。",
+      "scene": "夜晚的森林，一只小兔子站在树下，月光洒在树梢。",
+      "duration_sec": 3.545,
+      "duration_source": "tts",
+      "audio_url": "http://127.0.0.1:8000/audios/tts_6bbeb87a9509.mp3",
+      "highlight_object_ids": []
+    }
+  ],
+  "total_duration_sec": 7.636,
+  "safety_pass": true,
+  "safety_flags": [],
+  "model": {
+    "name": "mock-template",
+    "version": "1.0"
+  },
+  "elapsed_ms": 125
+}
