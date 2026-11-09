@@ -142,21 +142,28 @@ git push -u origin zhc-1
 
 1. 在 GitHub 上对 `zhc-1 → dev` 开 Pull Request；
 2. 进 **Actions** 页，选 `m2-vision-checks`，看这次 run；
-3. 三个 step 的名字就是结论：
-   - `1) 单元测试` → 期望 `86 passed, 0 failed`
-   - `2) 隔离自检` → 期望 `13/13 通过`
-   - `3) 公共 Schema 校验` → 期望 `[PASS] … 结论：N 页全部通过`
-4. 页面底部 **Artifacts → m2-check-logs** 下载三份原始日志，可直接作为证据。
+3. 五个 step 的名字就是结论（与 `.github/workflows/m2-vision-checks.yml` 一一对应）：
+   - `Unit and checker regressions` → 期望 `108 passed`（`pytest tests`，含校验器回归；数字以日志为准）
+   - `Isolated check` → 期望 `13/13 通过`
+   - `Public Schema gate` → 期望 `[PASS] … 结论：N 页、M 个产物全部通过公共 Schema 校验`
+   - `Record schema provenance` → 记录 `commit`、Python 版本、两个 Schema 文件的 SHA-256
+4. 页面底部 **Artifacts → m2-check-logs** 下载 `tests.log` / `isolated.log` / `schema.log` / `provenance.log`，可直接作为证据。
+
+> 两套入口不要混：
+> - `python tests/run_all.py` = **旧 86 项**，零依赖、不需要 pytest，也不含 `test_public_checker.py`；
+> - `python -m pytest tests` = **全量**（86 + 检查器回归 22 = 108），需要 `pytest` 与 `SCHEMA_REPO_ROOT`。
 
 也可以不开 PR，在 Actions 页点 **Run workflow**（`workflow_dispatch`）手动触发。
 
 ### 这条 workflow 的关键点
 
-- **模块放哪都行**：第一步自动探测 `paperbook-ai/` 或仓库根；
+- **模块放哪都行**：第一步自动探测 `paperbook-ai/` 或 `paperbook-ai-m2/paperbook-ai/` 或仓库根；
+  但 **workflow 文件本身必须放在仓库根的 `.github/workflows/`**，放在模块目录里不生效；
 - **`--repo-root .`**：在联合仓库里这一步导入的就是**真实** `orchestrator.schemas.ocr/vlm`，
-  不再是我本机的仿真模型；
-- 找不到 `orchestrator/schemas` 时脚本返回 2，workflow 会打 `::warning::` 但**不让 CI 变红**
-  （未验证 ≠ 失败）；字段真的不匹配才返回 1 让 CI 失败。
+  不再是我本机的仿真模型；日志会打印模型文件路径与 SHA-256，便于核对“验的是哪版契约”；
+- 找不到 `orchestrator/schemas` 时脚本返回 **2 = 未验证**，workflow 里所有 step 都是
+  `set -euo pipefail`，**退出 2 会让 CI 变红**——未验证不是通过，不会再有“退出 2 但 CI 绿”的情况；
+  字段真的不匹配返回 1，同样变红。
 
 ### 不想配 CI？用 Codespaces
 

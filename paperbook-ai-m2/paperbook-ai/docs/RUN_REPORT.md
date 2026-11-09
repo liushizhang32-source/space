@@ -178,19 +178,81 @@ python paperbook-ai-m2\paperbook-ai\scripts\validate_with_orchestrator.py `
 - 阶段硬超时（编排层职责）；
 - 更复杂的版式（多栏、旋转、密集文字）。
 
-## 7. 应用评审修复文件后的变化（2026-11-08，待新一轮 CI）
+## 7. 应用评审修复文件后的变化（2026-11-08）
 
 从 `MEMBER2_FIXED_FILES/` 应用了：
 
 | 文件 | 变化 |
 |---|---|
 | `scripts/validate_with_orchestrator.py` | **校验器改为验收语义**：缺 `ocr`/`vlm` 任一文件、坏 JSON、`checked==0` 均退出 1 |
-| `tests/test_public_checker.py` | 新增 8 条校验器回归（需 `SCHEMA_REPO_ROOT`） |
+| `tests/test_public_checker.py` | 校验器回归（`SCHEMA_REPO_ROOT` 必填）；第五轮后扩到 22 项 |
 | `requirements-test.txt` | pytest + `opencv-python-headless==5.0.0.93` |
 | `.github/workflows/m2-vision-checks.yml` | 改用 `pytest tests`，公共校验作为硬门禁（`set -euo pipefail`） |
 
 本地已验：`run_all` 86 passed、隔离自检 13/13、严格校验器对样本 2 页 4 产物全 PASS；
 缺文件与坏 JSON 两种情形均退出 1。
 
-**待新一轮 CI 确认**：pytest 计数应为 94；`opencv-python-headless==5.0.0.93` 的 Linux wheel；
-以及 `test_non_integer_bbox_is_failure`（已把样例值改成 `1.5`，避免 pydantic 宽松模式把 `1.0` 转成 `1`）。
+### 7.1 CI 实跑结果（run #5，分支 `zhc`，19s，全绿）
+
+| 步骤 | 实际输出 |
+|---|---|
+| `Install test dependencies` | 8–10s 通过 → `opencv-python-headless==5.0.0.93` 在 Linux **有 wheel** |
+| `Unit and checker regressions` | **`94 passed in 2.09s`**（`SCHEMA_REPO_ROOT=/home/runner/work/space/space`，Python 3.12.16） |
+| `Isolated check` | 0s 通过（13/13） |
+| `Public Schema gate` | `pydantic=2.14.3`；`OCRData ← .../orchestrator/schemas/ocr.py`；`VLMData ← .../orchestrator/schemas/vlm.py`；`[PASS]` × 4；**`结论：2 页、4 个产物全部通过公共 Schema 校验`** |
+
+同一提交在 PR #3 上触发的 run #6（`pull_request` synchronize，17s）同样全绿，PR 显示 `2/2` 检查通过。
+
+## 8. 第五轮评审（V5）修复：F01–F05（2026-11-09）
+
+V5 结论 B，两条主要问题：**严格整数负例被弱化**（1.0 → 1.5）、**批量枚举只扫 OCR 且不核对身份/尺寸**。
+本轮按 F01–F05 逐条改，没有修改公共 Schema、没有新增公共字段。
+
+### 8.1 F01 严格整数负例恢复并扩展
+
+- `tests/test_public_checker.py` 恢复 `1.0`，保留 `1.5`，并按 OCR / VLM 两侧参数化加入 `True`、`"1"`；
+  共 `2 × 4 = 8` 项。断言仍是“检查器必须退出 1”。
+- 理由（承认上一版判断错误）：公共坐标是 `StrictInt`，`1.0` 本来就该被拒；
+  只测 `1.5` 无法区分 strict 与 lax —— 宽松模型会收下 `1.0`、`True`、`"1"`，
+  而 `1.5` 在两种模式下都被拒，等于把“识别旧宽松模型”的能力让掉了。
+- 现在把“实际用的是哪版契约”写进证据：`validate_with_orchestrator.py` 打印
+  `OCRData ← <路径>  sha256=<文件 SHA>`、`VLMData ← …`；workflow 新增
+  `Record schema provenance` 步骤，打印 `commit=<git rev-parse HEAD>`、`ref/event`、Python 版本，
+  并 `sha256sum orchestrator/schemas/ocr.py orchestrator/schemas/vlm.py`，写入 `m2-logs/provenance.log` 并随 artifact 上传。
+
+### 8.2 F02 枚举改为 OCR/VLM 并集
+
+- `_page_ids()` 同时 glob `*_ocr.json` 与 `*_vlm.json` 取前缀并集；
+  `--all`（`data/json`）与 `--from`（扁平目录）都走它。
+- 只有 VLM 的页现在会被枚举出来，随后因缺 OCR 判 `[FAIL]`，不再被静默跳过。
+
+### 8.3 F03 文件名 / 配对身份 / 尺寸一致性
+
+逐页新增三类检查（都在公共模型校验之后）：
+
+1. 内容 `page_id` 必须等于文件名前缀，否则 `[FAIL] <page> <kind>.json 内容 page_id='…' 与文件名不一致`；
+2. 成对时核对 `book_id`、`page_no`、`image_width`、`image_height` 两侧一致；
+3. 任一侧缺失或校验失败时不做配对比较（避免级联噪声）。
+
+### 8.4 本机复测（严格整数仿真契约 + 真实样例数据）
+
+| 用例 | 命令 | 结果 |
+|---|---|---|
+| 成功样本 | `validate_with_orchestrator.py --repo-root .tmpcheck\space --from samples\example` | `2 页、4 个产物全部通过`，rc=0 |
+| 混合目录缺 OCR | 同上，目录含 book01 成对 + 只有 `book02_p01_vlm.json` | `[FAIL] book02_p01 ocr.json 不存在`，rc=1 |
+| 混合目录缺 VLM | 只有 `book02_p01_ocr.json` | `[FAIL] book02_p01 vlm.json 不存在`，rc=1 |
+| 文件名与内容不符 | vlm 内容改成 `page_id=book02_p01` | `[FAIL] … 与文件名不一致`，rc=1 |
+| 配对尺寸不符 | vlm `image_width` 1240→1241 | `[FAIL] … image_width 不一致：ocr=1240 vlm=1241`，rc=1 |
+| 严格整数 | bbox[0] = 1.0 / 1.5 / true / "1" | 4 种都 `[FAIL]`，rc=1 |
+| 旧 runner | `python tests/run_all.py` | `86 passed, 0 failed` |
+| 隔离自检 | `python scripts/isolated_check.py` | `13/13 通过` |
+
+> 说明：本机没有 pytest、也没有真实 `orchestrator/schemas`，上表的严格整数项用**本地仿真契约**（StrictInt 语义 + 递归 bbox 检查）验证“检查器会正确判失败”；真实公共模型下的 108 项由 CI 执行，日志见 Actions artifact `m2-check-logs`。
+
+### 8.5 F04 / F05 文档与边界
+
+- F04：`examples/consume_vision.py` 头部改成明确的**草稿**声明——缺 `StoryData` 必填字段（至少 `model`），
+  不得当正式 C3 交付；M2 的交付边界仍是 `*_ocr.json` / `*_vlm.json`。
+- F05：`docs/ISOLATED_TEST.md` 统一口径——`run_all` = 旧 86 项（不需要 pytest）、
+  `pytest tests` = 全量（86 + 检查器回归 22 = **108**）、隔离自检 = 13；
+  退出码 2 表示**未验证**，CI 里任何非零退出都算失败，不存在“退出 2 但 CI 绿”。

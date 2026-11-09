@@ -1,9 +1,13 @@
-"""M3 视角：读 ocr.json + vlm.json，产出一份 story 草稿。
+"""M3 视角：读 ocr.json + vlm.json，产出一份 story **草稿**。
 
     python examples/consume_vision.py --page book01_p01
 
-这是给成员3 的**起步模板**：结构已经按 C3（story.json）搭好，
-你只需要把 `narration` 换成 LLM 生成的故事文本，其余字段保持不变。
+⚠️ 这是**草稿模板，不是正式 C3 产物**：返回字典缺公共 `StoryData` 的必填字段
+（至少缺 `model`），直接当 story.json 交给前端或 Video 会被公共模型拒绝。
+它的用途只是演示“OCR/VLM → 段落/画面/安全”的字段映射，方便 M3 对照。
+
+正式 C3 由成员3 的 Story 实现生成；M2 的交付边界是 `data/json/*_ocr.json`
+与 `*_vlm.json`，不要用本示例替代 M3 的输出。
 """
 
 from __future__ import annotations

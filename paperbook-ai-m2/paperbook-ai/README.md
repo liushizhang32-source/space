@@ -62,16 +62,17 @@ contract  : ok
 本包里的 `paperbook-ai/.github/workflows/m2-vision-checks.yml` 只是同一份文件的副本，
 **放在模块目录里不会触发**，必须放到仓库根（`space/.github/workflows/`）。
 
-它跑三步，任一失败即变红：
+它跑四步，任一失败（含脚本退出码 2 = 未验证）即变红：
 
 | 步骤 | 命令 | 覆盖 |
 |---|---|---|
-| 1 | `python -m pytest tests -q` | 94 条；`SCHEMA_REPO_ROOT` 指向仓库根，用**真实**的 `orchestrator/schemas` |
+| 1 | `python -m pytest tests -q` | 108 条；`SCHEMA_REPO_ROOT` 指向仓库根，用**真实**的 `orchestrator/schemas` |
 | 2 | `python scripts/isolated_check.py` | 13 项隔离自检（含超时→2002 映射） |
-| 3 | `validate_with_orchestrator.py --repo-root . --from samples/example` | 公共 Schema 验收：缺文件、坏 JSON 都算失败 |
+| 3 | `validate_with_orchestrator.py --repo-root . --from samples/example` | 公共 Schema 验收：缺文件、坏 JSON、文件名/配对身份/尺寸不符都算失败 |
+| 4 | `git rev-parse HEAD` + `sha256sum orchestrator/schemas/*.py` | 记录这次验的 commit 与契约文件 SHA-256 |
 
 依赖由 `requirements-test.txt` 提供（`-r requirements.txt` + pytest + opencv-headless）。
-本地没装 pytest 时用 `python tests/run_all.py`（86 条，零第三方依赖）。
+本地没装 pytest 时用 `python tests/run_all.py`（86 条，零第三方依赖，不含校验器回归）。
 
 ## 物体索引与点读
 
