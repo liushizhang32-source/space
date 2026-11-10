@@ -1,0 +1,140 @@
+name: Paperbook CI
+
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [main, dev]
+  workflow_dispatch:
+    inputs:
+      test_ref:
+        description: 'Repository branch, tag or SHA to test (workflow must be available on the default branch)'
+        required: true
+        default: dev
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: paperbook-${{ github.workflow }}-${{ github.ref }}-${{ inputs.test_ref || '' }}
+  cancel-in-progress: true
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.revision.outputs.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.test_ref || github.sha }}
+          persist-credentials: false
+      - id: revision
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          git rev-parse HEAD
+
+  infrastructure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r tools/ci/requirements-ci.txt
+      - run: python tools/ci/validate.py
+      - run: python -m unittest discover -s tools/ci/tests -v
+
+  tests:
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {group: schema, media: false}
+          - {group: api, media: false}
+          - {group: member134, media: true}
+          - {group: enhanced, media: true}
+          - {group: integration, media: true}
+          - {group: lifecycle, media: false}
+          - {group: replay, media: false}
+          - {group: http, media: true}
+    steps:
+      - name: Checkout CI control code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: ci-control
+          persist-credentials: false
+      - name: Checkout selected test revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: target
+          ref: ${{ needs.resolve.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Inventory and required-file gate
+        run: >-
+          python ci-control/tools/ci/run.py --target target
+          --output .ci-results --group ${{ matrix.group }} --preflight
+      - name: Install target's declared test dependencies
+        run: python -m pip install -r target/orchestrator/tests/requirements-api-test.txt
+      - name: Check dependency consistency
+        run: python -m pip check
+      - name: Install local media tools and CJK fonts
+        if: matrix.media
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y ffmpeg fonts-noto-cjk fontconfig
+          echo "FFMPEG_PATH=$(command -v ffmpeg)" >> "$GITHUB_ENV"
+          echo "FFPROBE_PATH=$(command -v ffprobe)" >> "$GITHUB_ENV"
+          echo "VIDEO_FONT=$(fc-match -f '%{file}' 'Noto Sans CJK SC')" >> "$GITHUB_ENV"
+      - name: Execute isolated MOCK test group
+        run: >-
+          python ci-control/tools/ci/run.py --target target
+          --output .ci-results --group ${{ matrix.group }}
+      - name: Validate and stage current reports
+        run: >-
+          python ci-control/tools/ci/reports.py --output .ci-results
+          --group ${{ matrix.group }} --sha ${{ needs.resolve.outputs.sha }}
+      - name: Preserve group evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: paperbook-${{ matrix.group }}
+          path: .ci-results/.upload/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+
+  summary:
+    if: always()
+    needs: [resolve, infrastructure, tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: paperbook-*
+          path: .ci-results
+          merge-multiple: true
+      - name: Require all eight nonempty, unskipped groups
+        if: always()
+        env:
+          CI_DEPENDENCY_RESULTS: ${{ toJSON(needs) }}
+        run: >-
+          python tools/ci/summarize.py --output .ci-results
+          --require-evidence --sha ${{ needs.resolve.outputs.sha }}

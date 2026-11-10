@@ -1,0 +1,27 @@
+[
+  {
+    "source": "test_independent.py",
+    "source_sha256": "64b7e14cba8ab805583989f60a1cf90b4f0914a3dd31c2d6b60bb5adea1b6512",
+    "assertions_preserved": 18
+  },
+  {
+    "source": "test_v115_boundary.py",
+    "source_sha256": "a9bbddcc23a347940f1ce4bf7a9b1b5fb78d5a666dbadf0bde96bd4dbb7a8bad",
+    "assertions_preserved": 13
+  },
+  {
+    "source": "test_v116_boundary.py",
+    "source_sha256": "b941bcc0d5119f8e8df77a46516b596f9f4811809b54a9e9272cc5eb62cac405",
+    "assertions_preserved": 8
+  },
+  {
+    "source": "test_pr_boundaries.py",
+    "source_sha256": "f7a52a2533f8437513e5508dbc8b75e9e3d43a8cbc57c1085f4ea04297b58d97",
+    "assertions_preserved": 5
+  },
+  {
+    "source": "run_http_integration.py",
+    "source_sha256": "2340cb23a1a1385259bfcf3ec9841aa41a73d801760732b87cb081b069540725",
+    "assertions_preserved": 29
+  }
+]
