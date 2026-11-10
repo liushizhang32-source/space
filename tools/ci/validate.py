@@ -26,6 +26,13 @@ def validate():
     matrix = jobs['tests']['strategy']['matrix']['include']
     assert [m['group'] for m in matrix] == list(GROUPS)
     assert jobs['tests']['needs'] == 'resolve'
+    steps = jobs['tests']['steps']
+    upload = next(s for s in steps if s.get('uses', '').startswith('actions/upload-artifact@'))
+    assert upload['with']['include-hidden-files'] == 'true'
+    assert upload['with']['if-no-files-found'] == 'error'
+    assert upload['with']['path'] == '.ci-results/.upload/'
+    assert 'reports.py' in steps[steps.index(upload)-1]['run']
+    assert '--require-evidence --sha' in jobs['summary']['steps'][-1]['run']
     for job in jobs.values():
         assert job['runs-on'] == 'ubuntu-latest'
         assert 1 <= int(job['timeout-minutes']) <= 20

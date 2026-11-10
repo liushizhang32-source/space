@@ -101,12 +101,17 @@ jobs:
         run: >-
           python ci-control/tools/ci/run.py --target target
           --output .ci-results --group ${{ matrix.group }}
+      - name: Validate and stage current reports
+        run: >-
+          python ci-control/tools/ci/reports.py --output .ci-results
+          --group ${{ matrix.group }} --sha ${{ needs.resolve.outputs.sha }}
       - name: Preserve group evidence
-        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: paperbook-${{ matrix.group }}
-          path: .ci-results/
+          path: .ci-results/.upload/
+          include-hidden-files: true
+          if-no-files-found: error
           retention-days: 14
 
   summary:
@@ -130,4 +135,6 @@ jobs:
         if: always()
         env:
           CI_DEPENDENCY_RESULTS: ${{ toJSON(needs) }}
-        run: python tools/ci/summarize.py --output .ci-results
+        run: >-
+          python tools/ci/summarize.py --output .ci-results
+          --require-evidence --sha ${{ needs.resolve.outputs.sha }}
