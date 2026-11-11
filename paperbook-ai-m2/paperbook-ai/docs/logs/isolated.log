@@ -1,0 +1,19 @@
+==================================================================
+视觉模块 · 隔离自检（无网络 / 无模型 / 临时目录）
+临时目录：C:\Users\zhc\Documents\deepseek-harness\default-workspace\paperbook-ai\data\_isolated_cf757cff
+==================================================================
+[PASS] 01 正常页产出 ocr.json + vlm.json  ocr=ok vlm=ok
+[PASS] 02 stub 的 safety 必须是 false（打桩≠已审查）  safety=false + stub_mock
+[PASS] 03 无字页 → ocr empty 且 page_confidence=0  empty/0
+[PASS] 04 OCR 崩溃 → failed 文件 + 错误日志  code=2001
+[PASS] 05 VLM 崩溃 → 不产出 vlm.json + 日志  code=2002
+[PASS] 06 VLM 返回 None → 9002，不算成功  code=9002
+[PASS] 07 畸形 OCR 数据不中断流水线  blocks=2
+[PASS] 08 EXIF=6 图片：image_width 是文件尺寸  800x600
+[PASS] 09 safety 缺失/未知 → 判不安全  fail-closed
+[PASS] 10 超过 99 块 → 截断而不是整页失败  99
+[PASS] 11 省略 safety 参数 → 构造即报错  TypeError
+[PASS] 12 目录里没有残留的 vlm.json 失败文件  ok/empty only
+[PASS] 13 HTTP 超时包装链 → 错误码 2002  URLError(timeout) → 2002
+------------------------------------------------------------------
+13/13 通过

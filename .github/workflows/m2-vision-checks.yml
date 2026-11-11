@@ -1,0 +1,63 @@
+name: m2-vision-checks
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Locate module
+        id: locate
+        run: |
+          for d in paperbook-ai paperbook-ai-m2/paperbook-ai .; do
+            if [ -f "$d/scripts/isolated_check.py" ]; then
+              echo "dir=$d" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          exit 1
+      - name: Install test dependencies
+        run: python -m pip install -r "${{ steps.locate.outputs.dir }}/requirements-test.txt" "pydantic>=2.11,<3"
+      - name: Prepare logs
+        run: mkdir -p m2-logs
+      - name: Record schema provenance
+        run: |
+          set -euo pipefail
+          {
+            echo "[INFO] commit=$(git rev-parse HEAD)"
+            echo "[INFO] ref=${{ github.ref }} event=${{ github.event_name }}"
+            python -V 2>&1
+            sha256sum orchestrator/schemas/ocr.py orchestrator/schemas/vlm.py
+          } | tee m2-logs/provenance.log
+      - name: Unit and checker regressions
+        working-directory: ${{ steps.locate.outputs.dir }}
+        env:
+          SCHEMA_REPO_ROOT: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          python -m pytest tests -q -ra 2>&1 | tee "${{ github.workspace }}/m2-logs/tests.log"
+      - name: Isolated check
+        working-directory: ${{ steps.locate.outputs.dir }}
+        run: |
+          set -euo pipefail
+          python scripts/isolated_check.py 2>&1 | tee "${{ github.workspace }}/m2-logs/isolated.log"
+      - name: Public Schema gate
+        env:
+          MODULE_DIR: ${{ steps.locate.outputs.dir }}
+        run: |
+          set -euo pipefail
+          python "$MODULE_DIR/scripts/validate_with_orchestrator.py" --repo-root . --from "$MODULE_DIR/samples/example" 2>&1 | tee m2-logs/schema.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: m2-check-logs
+          path: m2-logs/
+

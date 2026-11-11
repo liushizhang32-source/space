@@ -1,0 +1,101 @@
+contract  : ok（字段合规，但阶段失败）
+[STAGE] vlm 失败 code=2001 0ms: RuntimeError
+        详情：data/logs/book03_p01_vlm.error.json
+  PASS  test_ids.test_book_id_rules
+  PASS  test_ids.test_derived_ids
+  PASS  test_ids.test_make_page_id_pads_two_digits
+  PASS  test_ids.test_page_no_range
+  PASS  test_ids.test_parse_page_id_roundtrip
+  PASS  test_contracts.test_clamp_bbox_normalizes_and_rejects_degenerate
+  PASS  test_contracts.test_extra_fields_are_opt_in
+  PASS  test_contracts.test_failed_document_keeps_contract
+  PASS  test_contracts.test_ocr_document_empty_page_is_not_failure
+  PASS  test_contracts.test_ocr_document_orders_blocks_and_weights_confidence
+  PASS  test_contracts.test_scale_restores_original_coordinates
+  PASS  test_contracts.test_unknown_fields_are_allowed
+  PASS  test_contracts.test_validator_catches_bad_bbox_and_order
+  PASS  test_contracts.test_vlm_document_and_validation
+  PASS  test_paddle_normalize.test_available_reports_missing_dependency_without_raising
+  PASS  test_paddle_normalize.test_normalize_v2_empty_and_malformed
+  PASS  test_paddle_normalize.test_normalize_v2_single_page
+  PASS  test_paddle_normalize.test_normalize_v3_dict
+  PASS  test_paddle_normalize.test_normalize_v3_object_with_json_attr
+  PASS  test_paddle_normalize.test_normalize_v3_wrapped_in_res
+  PASS  test_paddle_normalize.test_poly_to_bbox
+  PASS  test_metrics.test_cer_and_accuracy
+  PASS  test_metrics.test_cer_whitespace_insensitive
+  PASS  test_metrics.test_levenshtein_basic
+  PASS  test_metrics.test_normalize_strips_whitespace_only
+  PASS  test_index.test_build_from_vlm
+  PASS  test_index.test_empty_objects_page
+  PASS  test_index.test_explain_contains_label
+  PASS  test_index.test_failed_document_rejected
+  PASS  test_index.test_hit_inside_picks_smallest_area
+  PASS  test_index.test_hit_with_tolerance_near_edge
+  PASS  test_index.test_merge_annotations_keeps_explanation_and_polygon
+  PASS  test_index.test_miss_far_away
+  PASS  test_index.test_nearest_fallback_for_small_object
+  PASS  test_index.test_save_and_load_roundtrip
+  PASS  test_mask.test_build_segmenter_auto_and_unknown
+  PASS  test_mask.test_grabcut_segmenter_contract
+  PASS  test_mask.test_hit_uses_polygon_not_bbox
+  PASS  test_mask.test_null_segmenter_returns_bbox_polygon
+  PASS  test_mask.test_point_in_polygon
+  PASS  test_mask.test_polygon_area_square_and_triangle
+  PASS  test_mask.test_with_masks_merges_polygons
+  PASS  test_schema_compat.test_blocks_are_capped_at_99
+  PASS  test_schema_compat.test_builder_rejects_non_bool_safety
+[env] .env 已加载（OCR=paddle, VLM=http）
+page_id   : book03_p01
+  PASS  test_schema_compat.test_cli_exits_5_when_vlm_stage_fails
+[env] .env 已加载（OCR=paddle, VLM=http）
+page_id   : book01_p01
+ocr.json  : C:\Users\zhc\Documents\deepseek-harness\default-workspace\paperbook-ai\tests\.tmp\case_21b3d065c1\data\json\book01_p01_ocr.json  [ok] blocks=1 conf=0.99 0ms
+contract  : ok
+  PASS  test_schema_compat.test_cli_only_ocr_never_builds_vlm_backend
+[env] .env 已加载（OCR=paddle, VLM=http）
+page_id   : book02_p01
+vlm.json  : C:\Users\zhc\Documents\deepseek-harness\default-workspace\paperbook-ai\tests\.tmp\case_381175057b\data\json\book02_p01_vlm.json  [empty] objects=0 0ms
+contract  : ok
+  PASS  test_schema_compat.test_cli_only_vlm_never_builds_ocr_backend
+  PASS  test_schema_compat.test_exif_bbox_stays_inside_raw_frame
+  PASS  test_schema_compat.test_exif_orientation_keeps_raw_coordinates
+  PASS  test_schema_compat.test_failed_vlm_document_is_removed
+  PASS  test_schema_compat.test_ocr_failed_keys_exact
+  PASS  test_schema_compat.test_ocr_ok_keys_exact
+  PASS  test_schema_compat.test_parse_bool_handles_strings
+  PASS  test_schema_compat.test_parse_flags_normalizes
+  PASS  test_schema_compat.test_parse_safety_is_fail_closed
+  PASS  test_schema_compat.test_run_ocr_only_skips_vlm
+  PASS  test_schema_compat.test_run_vlm_only_skips_ocr
+  PASS  test_schema_compat.test_vlm_ok_and_empty_keys_exact
+  PASS  test_schema_compat.test_vlm_parse_treats_false_string_as_false
+  PASS  test_schema_compat.test_vlm_status_enum_excludes_failed
+  PASS  test_failure_paths.test_builder_requires_explicit_safety
+  PASS  test_failure_paths.test_exported_vlm_schema_excludes_failed
+  PASS  test_failure_paths.test_malformed_ocr_data_does_not_crash
+  PASS  test_failure_paths.test_ocr_builder_exception_becomes_stage_error
+  PASS  test_failure_paths.test_stale_vlm_file_is_removed_when_stage_fails
+  PASS  test_failure_paths.test_timeout_maps_to_2002
+  PASS  test_failure_paths.test_validator_rejects_vlm_failed_status
+  PASS  test_failure_paths.test_validator_requires_objects_when_ok
+  PASS  test_failure_paths.test_validator_requires_zero_confidence_for_empty_ocr
+  PASS  test_failure_paths.test_vlm_result_requires_explicit_safety
+  PASS  test_failure_paths.test_vlm_returning_none_is_a_stage_error
+  PASS  test_explain.test_backend_without_chat_raw_raises
+  PASS  test_explain.test_explain_objects_empty_labels_skips_call
+  PASS  test_explain.test_explain_objects_ignores_blank_and_extra_keys
+  PASS  test_explain.test_explain_objects_parses_mapping
+  PASS  test_explain.test_explanations_survive_save_load
+  PASS  test_explain.test_with_explanations_merges_and_explain_prefers_cached
+  PASS  test_tap_eval.test_norm_label_aliases
+  PASS  test_tap_eval.test_sample_background_avoids_objects
+  PASS  test_tap_eval.test_sample_inside_all_points_inside
+  PASS  test_tap_eval.test_summarize_metrics
+  PASS  test_pipeline.test_backend_failure_writes_failed_ocr_but_no_vlm_file
+  PASS  test_pipeline.test_empty_page_becomes_empty_status
+  PASS  test_pipeline.test_large_image_bbox_stays_in_original_frame
+  PASS  test_pipeline.test_output_survives_reload_and_validates
+  PASS  test_pipeline.test_run_page_writes_both_contract_files
+
+86 passed, 0 failed

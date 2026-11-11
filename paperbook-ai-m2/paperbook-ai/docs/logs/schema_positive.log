@@ -1,0 +1,12 @@
+[INFO] 公共 Schema 根目录：C:\Users\zhc\Documents\deepseek-harness\default-workspace\.pkg\fake_space
+[INFO] pydantic=2.14.2
+[INFO] OCRData ← C:\Users\zhc\Documents\deepseek-harness\default-workspace\.pkg\fake_space\orchestrator\schemas\ocr.py
+[INFO] VLMData ← C:\Users\zhc\Documents\deepseek-harness\default-workspace\.pkg\fake_space\orchestrator\schemas\vlm.py
+[INFO] 待校验 2 页
+
+[PASS] book01_p01 ocr.json  status=ok
+[PASS] book01_p01 vlm.json  status=ok
+[PASS] exif01_p01 ocr.json  status=ok
+[PASS] exif01_p01 vlm.json  status=ok
+
+结论：2 页、4 个产物全部通过公共 Schema 校验
