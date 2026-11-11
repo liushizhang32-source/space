@@ -147,19 +147,24 @@ def test_parse_bool_handles_strings():
 
 
 def test_parse_safety_is_fail_closed():
+    # V1.2.1 P0-1：只认原生布尔 true；"true"/1/"1" 一律不算安全
     assert parse_safety({"pass": True}) == (True, [])
-    assert parse_safety({"pass": "true"}) == (True, [])
-    assert parse_safety({"pass": "false"}) == (False, [])
-    assert parse_safety({"pass": False, "flags": ["暴力"]}) == (False, ["暴力"])
+    assert parse_safety({"pass": True, "flags": []}) == (True, [])
+    assert parse_safety({"pass": "true"}) == (False, ["safety_pass_not_true"])
+    assert parse_safety({"pass": 1}) == (False, ["safety_pass_not_true"])
+    assert parse_safety({"pass": "false"})[0] is False
+    assert parse_safety({"pass": False, "flags": ["暴力"]})[0] is False
+    assert parse_safety({"pass": True, "flags": "暴力"}) == (False, ["safety_flags_not_list"])
+    assert parse_safety({"pass": True, "flags": ["  "]}) == (False, ["safety_flag_blank"])
 
-    # 缺失 / null / 未知 / 类型不对 —— 一律判不安全并留 flag
+    # 缺失 / null / 未知 / 类型不对 —— 一律判不安全并留原因
     for payload, flag in (
         (None, "safety_missing"),
-        ({}, "safety_missing"),
-        ({"flags": []}, "safety_missing"),
-        ({"pass": None}, "safety_unparsed"),
-        ({"pass": "maybe"}, "safety_unparsed"),
-        ({"pass": [1]}, "safety_unparsed"),
+        ({}, "safety_pass_missing"),
+        ({"flags": []}, "safety_pass_missing"),
+        ({"pass": None}, "safety_pass_not_true"),
+        ({"pass": "maybe"}, "safety_pass_not_true"),
+        ({"pass": [1]}, "safety_pass_not_true"),
         ("false", "safety_missing"),
     ):
         passed, flags = parse_safety(payload)
@@ -181,7 +186,9 @@ def test_vlm_parse_treats_false_string_as_false():
     )
     result = QwenVlBackend._parse(content, (100, 100))
     assert result.safety_pass is False
-    assert result.safety_flags == ["暴力"]
+    # 字符串 "false" 不是原生布尔、flags 不是数组，按 V1.2.1 两条都拒绝
+    assert result.safety_flags == ["safety_pass_not_true", "safety_flags_not_list"]
+    assert result.safety_source == "unavailable"
 
     doc = contracts.build_vlm_document(
         book_id="book01", page_id="book01_p01", page_no=1,

@@ -48,6 +48,34 @@ def write_json_atomic(path: str | Path, payload: dict[str, Any]) -> Path:
     return target
 
 
+def write_json_exclusive(path: str | Path, payload: dict[str, Any]) -> Path:
+    """**不覆盖**地写入 JSON（V1.2.1 P0-3）。
+
+    用 ``O_CREAT|O_EXCL`` 直接创建目标文件：目标已存在（含符号链接、
+    预置文件、并发抢先创建）时抛 ``FileExistsError``，绝不静默覆盖。
+    崩溃留下半截文件也只会待在自己的 attempt 目录里，由 M1 清理。
+    """
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    data = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_BINARY"):
+        flags |= os.O_BINARY
+    fd = os.open(target, flags, 0o644)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except BaseException:
+        try:
+            target.unlink()
+        except OSError:
+            pass
+        raise
+    return target
+
+
 def log_dir(data_dir: str | Path) -> Path:
     path = Path(data_dir) / "logs"
     path.mkdir(parents=True, exist_ok=True)

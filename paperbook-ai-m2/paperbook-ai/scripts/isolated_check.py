@@ -9,7 +9,9 @@
 - 关闭 verbose（`VISION_LOG_VERBOSE` 强制清零），日志不含原文；
 - 同页串行执行，不测试并发。
 
-退出码：0 全部通过；1 有失败项。
+退出码：0 全部通过；1 有失败项或结果输出失败；2 清理本次临时目录失败
+（详见 stderr 与 data/_isolated_cleanup.log）。原始业务异常的优先级最高，
+清理/输出故障只写日志，不会替换它。
 """
 
 from __future__ import annotations
@@ -17,13 +19,19 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+
+TEMP_ROOT = ROOT / "data"
+CLEANUP_LOG = TEMP_ROOT / "_isolated_cleanup.log"
+_TEMP_NAME = re.compile(r"^_isolated_[0-9a-f]{8}$")
 
 # 先禁用网络相关开关与 verbose，再 import 视觉模块
 os.environ.pop("VISION_LOG_VERBOSE", None)
@@ -276,36 +284,135 @@ def run(data: Path) -> None:
             qwen_vl.urllib.request.urlopen = original
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="隔离自检（无网、无模型）")
-    parser.add_argument("--keep", action="store_true", help="保留临时目录")
-    args = parser.parse_args(argv)
+def _make_workdirs(data: Path) -> None:
+    """初始化第一步：在本次临时目录内建出产物子目录。"""
+    (data / "json").mkdir(parents=True, exist_ok=True)
+    (data / "logs").mkdir(parents=True, exist_ok=True)
 
-    data = ROOT / "data" / f"_isolated_{uuid.uuid4().hex[:8]}"
-    data.mkdir(parents=True, exist_ok=True)
 
-    print("=" * 66)
-    print("视觉模块 · 隔离自检（无网络 / 无模型 / 临时目录）")
-    print(f"临时目录：{data}")
-    print("=" * 66)
+def _preflight(data: Path) -> None:
+    """初始化第二步：确认目录可写（写一个探针再删掉，不留残留）。"""
+    probe = data / ".write_probe"
+    probe.write_bytes(b"ok")
+    probe.unlink()
 
+
+def _assert_owned(data: Path) -> None:
+    """只允许清理本次运行的临时目录，越界一律拒绝。"""
+    if not _TEMP_NAME.match(data.name):
+        raise RuntimeError(f"拒绝清理：目录名不是本次运行的临时目录（{data.name}）")
+    if data.resolve().parent != TEMP_ROOT.resolve():
+        raise RuntimeError(f"拒绝清理：目录不在临时根目录下（{data}）")
+
+
+def _safe_stderr(text: str) -> None:
+    """向 stderr 写一行；写不出去就静默放弃。
+
+    stderr 本身可能损坏（编码错误、BrokenPipe、被替换的流），
+    日志通路绝不能成为新的异常来源，更不能覆盖调用方的原始异常。
+    """
     try:
-        run(data)
-    finally:
+        print(text, file=sys.stderr, flush=True)
+    except BaseException:  # noqa: BLE001 - 日志通路失败不得传播
         pass
 
+
+def _log_failure(tag: str, data: Path, exc: BaseException) -> None:
+    """记录清理/报告失败。两条通路各自保护，任何一条失败都不影响另一条。"""
+    line = (
+        f"[{tag}] {datetime.now().isoformat(timespec='seconds')} "
+        f"{data} {type(exc).__name__}: {exc}"
+    )
+    _safe_stderr(line)
+    try:
+        CLEANUP_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with CLEANUP_LOG.open("a", encoding="utf-8") as handle:
+            handle.write(line + "\n")
+    except BaseException as log_exc:  # noqa: BLE001 - 落盘失败只降级为 stderr
+        _safe_stderr(f"[{tag}] 日志写入失败：{type(log_exc).__name__}: {log_exc}")
+
+
+def _cleanup(data: Path, *, keep: bool = False) -> bool:
+    """清理本次临时目录。绝不抛异常，绝不掩盖调用方的业务异常。"""
+    try:
+        if keep:
+            try:
+                print(f"已保留：{data}")
+            except BaseException:  # noqa: BLE001 - 输出通路失败不影响保留语义
+                pass
+            return True
+        if not data.exists():
+            return True
+        _assert_owned(data)
+        shutil.rmtree(data)
+    except Exception as exc:  # noqa: BLE001 - 清理失败只记录，不改变原始异常
+        _log_failure("CLEANUP-FAIL", data, exc)
+        return False
+    return True
+
+
+def _safe_report() -> BaseException | None:
+    """输出结果，返回报告失败的原因（正常时返回 None）。绝不抛异常。"""
+    try:
+        _report()
+    except BaseException as exc:  # noqa: BLE001 - 报告失败不得阻断清理
+        return exc
+    return None
+
+
+def _report() -> None:
     failures = [name for name, ok, _ in RESULTS if not ok]
     for name, ok, detail in RESULTS:
         print(f"[{'PASS' if ok else 'FAIL'}] {name}" + (f"  {detail}" if detail else ""))
     print("-" * 66)
     print(f"{len(RESULTS) - len(failures)}/{len(RESULTS)} 通过")
+    if failures:
+        print("失败项：" + "、".join(failures))
 
-    if not args.keep:
-        shutil.rmtree(data, ignore_errors=True)
-    else:
-        print(f"已保留：{data}")
 
-    return 1 if failures else 0
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="隔离自检（无网、无模型）")
+    parser.add_argument("--keep", action="store_true", help="保留临时目录")
+    args = parser.parse_args(argv)
+
+    data = TEMP_ROOT / f"_isolated_{uuid.uuid4().hex[:8]}"
+    created = False
+    cleanup_ok = True
+    error: BaseException | None = None
+    report_error: BaseException | None = None
+
+    try:
+        data.mkdir(parents=True)
+        created = True
+
+        print("=" * 66)
+        print("视觉模块 · 隔离自检（无网络 / 无模型 / 临时目录）")
+        print(f"临时目录：{data}")
+        print("=" * 66)
+
+        _make_workdirs(data)
+        _preflight(data)
+        run(data)
+    except BaseException as exc:  # noqa: BLE001 - 先记下，清理后再按原样抛出
+        error = exc
+    finally:
+        # 1) 先做资源释放：只依赖文件系统，不依赖任何输出通路，
+        #    因此报告打印失败、stdout 损坏都不会阻断下面这行。
+        if created:
+            cleanup_ok = _cleanup(data, keep=args.keep)
+        # 2) 再输出结果：失败只记录，既不阻断清理，也不顶替原始异常。
+        report_error = _safe_report()
+        if report_error is not None:
+            _log_failure("REPORT-FAIL", data, report_error)
+
+    # 3) 原始业务异常优先级最高：清理/报告故障都只留在日志里。
+    if error is not None:
+        raise error
+    if not cleanup_ok:
+        return 2
+    if report_error is not None:
+        return 1
+    return 1 if any(not ok for _, ok, _ in RESULTS) else 0
 
 
 if __name__ == "__main__":

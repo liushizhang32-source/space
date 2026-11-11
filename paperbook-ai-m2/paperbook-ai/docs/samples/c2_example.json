@@ -1,0 +1,44 @@
+{
+  "schema_version": "1.0",
+  "book_id": "book01",
+  "page_id": "book01_p01",
+  "page_no": 1,
+  "status": "ok",
+  "image_width": 1000,
+  "image_height": 1414,
+  "description": "两个孩子在草地上拉一个纸袋",
+  "objects": [
+    {
+      "object_id": "book01_p01_o01",
+      "label": "人物",
+      "bbox": [
+        120,
+        180,
+        300,
+        780
+      ],
+      "confidence": 0.82
+    },
+    {
+      "object_id": "book01_p01_o02",
+      "label": "袋子",
+      "bbox": [
+        150,
+        420,
+        360,
+        760
+      ],
+      "confidence": 0.79
+    }
+  ],
+  "scene_tags": [
+    "孩子",
+    "草地",
+    "袋子"
+  ],
+  "safety": {
+    "pass": true,
+    "flags": []
+  },
+  "elapsed_ms": 9
+}

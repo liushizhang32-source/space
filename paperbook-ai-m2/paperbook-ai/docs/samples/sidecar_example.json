@@ -1,0 +1,67 @@
+{
+  "schema_version": "vision_refs/0.1",
+  "contract_status": "candidate",
+  "identity": {
+    "job_id": "job_example_001",
+    "page_id": "book01_p01",
+    "generation_id": "gen_example_001",
+    "input_revision": 3,
+    "epoch": 7,
+    "attempt_id": "att_example_001",
+    "fencing_token": "tok_example_9f2c41d7"
+  },
+  "c2": {
+    "asset_id": "book01_p01_vlm",
+    "schema_version": "1.0",
+    "relative_path": "json/book01_p01_vlm.json",
+    "sha256": "c0c2afee6bcd284c8ef8aeae3f494f55d72a04847d621f3dc9e982a6e82dbfb4"
+  },
+  "source": {
+    "component_mode": "real",
+    "model_ref": "unknown",
+    "prompt_sha256": "7525201ff05548ecb4c00869dee0b7e71d6c80365a2194ce016dc0a7266b9819",
+    "evidence_ref": "json/book01_p01_vlm.json"
+  },
+  "observations": [
+    {
+      "observation_id": "obs_001",
+      "object_id": "book01_p01_o01",
+      "appearance": {
+        "clothing": null,
+        "visible_features": []
+      },
+      "visual_description": "人物",
+      "confidence": {
+        "value": 0.82,
+        "kind": "model_estimate",
+        "calibrated": false
+      },
+      "identity_status": "unknown",
+      "source_ref": "json/book01_p01_vlm.json#/objects/0"
+    },
+    {
+      "observation_id": "obs_002",
+      "object_id": "book01_p01_o02",
+      "appearance": {
+        "clothing": null,
+        "visible_features": []
+      },
+      "visual_description": "袋子",
+      "confidence": {
+        "value": 0.79,
+        "kind": "model_estimate",
+        "calibrated": false
+      },
+      "identity_status": "unknown",
+      "source_ref": "json/book01_p01_vlm.json#/objects/1"
+    }
+  ],
+  "c1_sha256": "bbe7e216a5c66c082130ee1a786ae47e8e3f2b5cd1215e00f3c0fcb173e18e5b",
+  "job_id": "job_example_001",
+  "page_id": "book01_p01",
+  "generation_id": "gen_example_001",
+  "input_revision": 3,
+  "epoch": 7,
+  "attempt_id": "att_example_001",
+  "fencing_token": "tok_example_9f2c41d7"
+}

@@ -69,4 +69,5 @@ class StubVlmBackend:
             # 打桩结果不是真实安全结论：显式标注来源，避免被当成已审查内容
             safety_pass=False,
             safety_flags=["stub_mock"],
+            safety_source="stub",
         )

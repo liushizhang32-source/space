@@ -39,6 +39,11 @@ class VlmResult:
     objects: list[VlmObject] = field(default_factory=list)
     scene_tags: list[str] = field(default_factory=list)
     safety_flags: list[str] = field(default_factory=list)
+    # 安全结论的来源。只有模型响应本身（"model"）才算数；
+    # 默认 "unknown" 会被 safety.evaluate_vlm_safety 判为不可信并 fail-closed。
+    safety_source: str = "unknown"
+    # 置信度缺失/非法的物体数，用于诊断，不参与打分。
+    confidence_missing: int = 0
 
 
 @runtime_checkable

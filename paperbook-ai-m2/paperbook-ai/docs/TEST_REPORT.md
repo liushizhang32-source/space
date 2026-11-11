@@ -120,8 +120,11 @@ python -m pytest tests -q    →  118 passed              # 全量：86 + 校验
    - **run #5（新 workflow，zhc，19s）**：`pytest` **94 passed in 2.09s**、
      `结论：2 页、4 个产物全部通过公共 Schema 校验`、
      `OCRData ← /home/runner/work/space/space/orchestrator/schemas/ocr.py`；
-   - 第七轮评审（V7）后扩到 **118 项**（V5 时为 108）并新增 provenance 记录，
-     本轮复跑结果以 Actions 日志与 `m2-check-logs` artifact 为准（含 `commit` 与 Schema 文件 SHA-256）。
+   - 第七轮评审（V7）后扩到 **118 项**（V5 时为 108），并新增 provenance 记录；
+   - **run #19（push `41f051f`，24s）**：`118 passed in 2.12s`，provenance 记录 `zhc` Head 的
+     `ocr.py 966df748…`（宽松 `int` 版）；
+   - **run #20（PR #3 synchronize，23s）**：`118 passed`，`Public Schema gate` 对 2 页 4 产物全 `[PASS]`，
+     记录的是合并预览的 `ocr.py 6a98d4c0…` / `vlm.py 4b2de091…`（`StrictInt` 版）。
    仍未覆盖真实绘本与更复杂版式。
 2. **真实 Paddle / VLM / 真实绘本未验证**：质量、耗时、阅读顺序均无实测。
 3. **依赖与模型版本未锁定**：`requirements.txt` 仅 Pillow/NumPy。

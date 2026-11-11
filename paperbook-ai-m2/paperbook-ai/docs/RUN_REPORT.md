@@ -323,6 +323,20 @@ M1 不需要、也不应该为了适配旧分支去改冻结的 Schema。
 | #15 | push `232bc14` | **绿（23s）** | 文件落到正确的 `paperbook-ai-m2/paperbook-ai/`；`pytest` 全绿（含 32 项检查器回归），`Public Schema gate` 通过 4 个产物 |
 | #17 | push `8ef045f7125fa95de729e3e1f93451047dd9980d` `Delete paperbook-ai directory` | **绿（23s）** | 删除误传残片后仍全绿，证明清理没有破坏门禁 |
 | #18 | PR #3 synchronize | **绿（25s）** | PR 侧同样通过 |
+| #19 | push `41f051f` | **绿（24s）** | `118 passed in 2.12s`；provenance 记为 `zhc` Head 的 `ocr.py 966df748…`（即宽松 `int` 那一版） |
+| #20 | PR #3 synchronize | **绿（23s）** | `118 passed`；gate 记录的 schema 是合并预览的 `ocr.py 6a98d4c0…` / `vlm.py 4b2de091…`（`StrictInt` 那一版），4 个产物全部 PASS |
+| #25 | push `ca7acf5d720c4d1e5de5406259c3d2dcb2a53ae` `fix(vision): 同步 VLM 提示词` | **绿（17s）** | **`118 passed in 1.99s`**；仓库里的 `qwen_vl.py` 与交付包内那份终于同源（此前 51/52，V9 指出）；gate 仍 4 个产物 PASS |
+| #26 | PR #3 synchronize | **绿（25s）** | PR 侧同步通过，同一批用例与 gate 结论 |
+
+**两套哈希对应两棵不同的树**（这正是 V7 指出的混用问题，现在由 CI 自己记录）：
+
+| run | 事件 | checkout 到哪棵树 | 记录的 `ocr.py` | bbox 类型 |
+|---|---|---|---|---|
+| #19 | push | `zhc` Head | `966df7484462…8d66c` | 普通 `int`（宽松） |
+| #20 | pull_request | PR #3 合并预览 | `6a98d4c05815…3d699` | `StrictInt` |
+
+两个值分别出现在 `Record schema provenance` 和 `Public Schema gate` 的输出里，
+不需要再靠推断，也不必手工抄写。
 
 > **上传路径坑（已记入交接注意）**：GitHub 的 “Upload files” 页面路径是**相对你当前所在目录**的。
 > 当时浏览器停在 `space/paperbook-ai/`，拖入 `paperbook-ai-m2` 后文件落成
@@ -332,19 +346,34 @@ M1 不需要、也不应该为了适配旧分支去改冻结的 Schema。
 > 该残片已在本轮删除（commit `8ef045f7125fa95de729e3e1f93451047dd9980d`），根目录现在只有 `.github/`、`docs/`、
 > `orchestrator/`、`paperbook-ai-m2/`、`README.md`。
 
-**run #17 的 `Record schema provenance` 原始输出**（对应 commit `8ef045f7125fa95de729e3e1f93451047dd9980d`）：
+**run #19 的 `Record schema provenance` 原始输出**（对应 commit `41f051f127c16979d23eb234c2a4f6e14b3d976d`）：
 
 ```
-[INFO] commit=8ef045f7125fa95de729e3e1f93451047dd9980d
+[INFO] commit=41f051f127c16979d23eb234c2a4f6e14b3d976d
 [INFO] ref=refs/heads/zhc event=push
 Python 3.12.16
-（两行 sha256sum 输出：orchestrator/schemas/ocr.py、vlm.py）
+966df7484462c354ae52bf89853477cca0978c8f49516c4e452ac33b2418d66c  orchestrator/schemas/ocr.py
+b8e4cd40c4e91af5989313703058e0e1ca508e69ea9e8c2a48fd46fa40f244ec  orchestrator/schemas/vlm.py
 ```
 
-> 两个 schema 文件的 SHA-256 **不在这里手工转录**：上一版文档里的哈希是照着截图
-> 手抄的，字符有错位（评审 R7-04 已指出）。权威值以 run #17 页面底部
-> `Artifacts → m2-check-logs` 里的 `provenance.log` 为准，逐字节复制。
-> 本包附带的 `docs/logs/` 里不含该文件（它只存在于 CI 产物中）。
+> 交叉核对：`ocr.py` 这一行与评审方（V7 §4.1）独立读取 `zhc` Head 文件算出的值
+> `966df7484462…8d66c` 完全一致；`vlm.py` 一行取自同一次 run 的日志。
+> 上一版文档里这两行是手抄的，字符有错位（V7 R7-04），本版已按日志原文替换。
+
+**run #25 的 `Record schema provenance` 原始输出**（对应 commit `ca7acf5d720c4d1e5de5406259c3d2dcb2a53ae`，
+即补齐 `qwen_vl.py` 之后的那一版）：
+
+```
+[INFO] commit=ca7acf5d720c4d1e5de5406259c3d2dcb2a53ae
+[INFO] ref=refs/heads/zhc event=push
+Python 3.12.16
+966df7484462c354ae52bf89853477cca0978c8f49516c4e452ac33b2418d66c  orchestrator/schemas/ocr.py
+b8e4cd40c4e91af5989313703058e0e1ca508e69ea9e8c2a48fd46fa40f244ec  orchestrator/schemas/vlm.py
+```
+
+> 这次 commit 之后，`zhc` 上的 52 个 Python 文件与交付包内**逐字节同源**（V9 指出的 51/52 差异就此闭合）。
+> 包内 `src/vision/backends/qwen_vl.py` 的 SHA-256 为
+> `AEF63A5E1065B0232F9C668CFEDB99B46F417EB0D45C66777EBFAE7CAB260B3B`。
 
 这五行就是“CI 到底验了哪一版公共契约”的硬证据：commit 固定、Python 版本固定、
 两个 schema 文件的 SHA-256 固定。评审若要复现，只要 checkout 这个 commit，
@@ -358,11 +387,27 @@ V7 结论 B，确认 F01–F05 已落实，另提 4 项收尾。逐条处理如�
 |---|---|---|---|
 | R7-01 | 检查器遇 `[]`、`null` 等非对象 JSON 会抛未处理异常 | `validate_with_orchestrator.py` 在 `json.loads` 后加 `isinstance(doc, dict)` 守卫，判 `[FAIL] … 顶层不是 JSON 对象（list）` 后 `continue`，不计入成功 | `[]` → rc=1，无 Traceback；同目录好页仍 `[PASS]` |
 | R7-02 | 文件名错配负例被公共模型提前拒绝，没覆盖到新增检查 | 新 helper `repage()` 把文档整体改成另一页（含 `block_id`/`object_id` 前缀），内容自洽、只与文件名不符 | book02 内容存成 `book01_p01_vlm.json` → rc=1，打印 `与文件名不一致` |
-| R7-03 | 缺 README 要求复制的 `.env.example` | 补回 `.env.example`（全 stub 默认、真实后端注释、无密钥）；README 同步说明 | 文件 902 B，`VISION_OCR_BACKEND=stub` |
+| R7-03 | 缺 README 要求复制的 `.env.example` | 补回 `.env.example`（全 stub 默认、真实后端注释、无密钥），模板键名逐一对照 `backends/__init__.py` 与 `qwen_vl.py` 实际读取的名字；README 同步说明 | 仓库提交 `26088b2`，**975 B / 28 行**，`VISION_OCR_BACKEND=stub`，无任何密钥；键名为 `PADDLE_OCR_LANG` / `PADDLE_OCR_MKLDNN`（旧版误写 `VISION_OCR_*`，代码不读取） |
 | R7-04 | 提交号、指纹、版本说明有笔误 | `8f045f1` → 完整 `8ef045f7…`；provenance 两行 SHA 不再手抄，改指 artifact；`1.5` 项数 4→2；补 Head(int) / dev(StrictInt) 对照 | 见 §8.6、§8.7 |
 
 回归：`tests/run_all.py` 86 passed、`scripts/isolated_check.py` 13/13、仿真契约 2 页 4 产物 rc=0；
 校验器回归由 22 项增至 32 项（全量 118）。
+
+## 8.9 V9 复审后的隔离复测（2026-11-09）
+
+在独立解压目录、断网、stub 后端、不接触联合仓库的条件下复测交付包：
+
+| 检查 | 结果 |
+|---|---|
+| `tests/run_all.py` | **86 passed, 0 failed** |
+| `scripts/isolated_check.py` | **13/13 通过** |
+| `scripts/check_env.py` | 依赖 OK、后端 stub、`DATA_DIR` 可写、冒烟 1 页 ok |
+| CLI 单页全流程（stub，`--strict`） | exit 0，产出 ocr/vlm 两份契约文件 |
+| 产物契约断言 | **15/15 通过**（page_id/status/尺寸/bbox 整数与范围/ID 唯一/safety 显式布尔/内部校验器） |
+| 清单核对 | 97 项，0 项不符 |
+
+完整输出见 `docs/logs/isolated_retest.log`，方法与复现命令见 `docs/ISOLATED_RETEST.md`。
+**未覆盖**：`pytest` 118 项与真实公共 Schema（需联合仓库与 pytest，由 CI 覆盖）。
 
 ## 9. 真实绘本首跑（2026-11-09，本机）
 

@@ -27,6 +27,8 @@ MODULES = (
     "test_explain",
     "test_tap_eval",
     "test_pipeline",
+    "test_worker",
+    "test_worker_v121",
 )
 
 

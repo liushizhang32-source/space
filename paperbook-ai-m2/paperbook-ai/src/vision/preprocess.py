@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import io
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -96,17 +97,39 @@ def read_orientation(path: Path) -> int:
 
 
 def load_page_image(
-    image_path: str | Path, *, work_side: int = WORK_SIDE, max_side: int = MAX_SIDE
+    image_path: str | Path,
+    *,
+    work_side: int = WORK_SIDE,
+    max_side: int = MAX_SIDE,
+    data: bytes | None = None,
 ) -> PageImage:
-    path = Path(image_path)
-    if not path.is_file():
-        raise ImageLoadError(f"图片不存在: {path}")
+    """加载一页图片。
 
-    orientation = read_orientation(path)
+    ``data`` 给定时不再读盘：Worker 先用 ``O_RDONLY`` 读一次字节、
+    校验 SHA256，再用同一份字节解码，避免“校验后文件被替换”的 TOCTOU。
+    """
+    path = Path(image_path)
+    if data is None:
+        if not path.is_file():
+            raise ImageLoadError(f"图片不存在: {path}")
+        try:
+            data = path.read_bytes()
+        except OSError as exc:
+            raise ImageLoadError(f"图片读取失败: {exc}") from exc
+
     try:
-        with Image.open(path) as handle:
+        with Image.open(io.BytesIO(data)) as handle:
             raw_size = handle.size  # 文件原始尺寸：契约坐标系
+            value = handle.getexif().get(_ORIENTATION_TAG, 1)
+            try:
+                orientation = int(value)
+            except (TypeError, ValueError):
+                orientation = 1
+            if not 1 <= orientation <= 8:
+                orientation = 1
             upright = ImageOps.exif_transpose(handle).convert("RGB")  # 摆正副本
+    except ImageLoadError:
+        raise
     except Exception as exc:  # noqa: BLE001 - 统一转成契约错误
         raise ImageLoadError(f"图片读取失败: {exc}") from exc
 
