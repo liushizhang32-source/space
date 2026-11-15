@@ -17,11 +17,15 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 from datetime import datetime, timezone
 
 from .config import Settings
 from .errors import AppError, ErrorCode, VideoPublishError
 from .ids import page_no_of, ulid
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .m1_pipeline import M1PageSession
 from .schemas import StoryDoc
 from .story.builder import StoryResult, build_page_story
 from .storage import PageFiles, asset_url, read_json
@@ -94,6 +98,11 @@ class PageRunResult:
     video_error: dict | None = None
     elapsed_ms: int = 0
     story: StoryResult | None = None
+    generation_mode: str = "mock_static"
+    m1_attempt_id: str | None = None
+    m1_result_sha256: str | None = None
+    #: 失败路径上释放 M1 预留失败时记录；None 表示无需释放或释放成功。
+    budget_release_error: dict | None = None
 
     def to_dict(self) -> dict:
         """与 /jobs 的 pages[] 结构对齐（video_error 是本地调试附加字段）。"""
@@ -106,10 +115,29 @@ class PageRunResult:
             "video_url": self.video_url,
             "error": self.error,
             "elapsed_ms": self.elapsed_ms,
+            "generation_mode": self.generation_mode,
         }
         if self.video_error:
             payload["video_error"] = self.video_error
         return payload
+
+
+def _release_on_failure(m1: "M1PageSession | None") -> dict | None:
+    """失败路径的统一释放：只释放未提交的预留，释放失败必须显式上报。"""
+    if m1 is None:
+        return None
+    try:
+        m1.release()
+        return None
+    except AppError as exc:
+        m1_code = getattr(exc, "m1_code", None)
+        logger.error(
+            "M1 预算释放失败：%s（attempt=%s, m1_code=%s）；预算可能仍被占用，需 M1 对账",
+            exc.msg,
+            m1.attempt_id,
+            m1_code,
+        )
+        return {"code": int(exc.code), "msg": exc.msg, "m1_code": m1_code}
 
 
 def run_page(
@@ -121,12 +149,18 @@ def run_page(
     tts_client: TTSClient | None = None,
     ocr: dict | None = None,
     vlm: dict | None = None,
+    m1: "M1PageSession | None" = None,
 ) -> PageRunResult:
     started = time.perf_counter()
     files = PageFiles(settings, page_id)
     page_no = page_no_of(page_id)
 
     try:
+        if m1 is not None:
+            # 授权模式下输入只来自 M1 Gate 桥接的不可变 bytes，不读本地 ocr/vlm
+            m1.ensure_page(page_id)
+            ocr, vlm = m1.inputs_json()
+
         story = build_page_story(
             page_id,
             age_level,
@@ -136,6 +170,8 @@ def run_page(
             vlm=vlm,
         )
     except AppError as exc:
+        # 授权读取失败 / 页身份不一致 / 故事生成失败走同一释放路径
+        release_error = _release_on_failure(m1)
         status = "blocked" if exc.code == ErrorCode.SAFETY_BLOCKED else "failed"
         return PageRunResult(
             page_id=page_id,
@@ -143,7 +179,47 @@ def run_page(
             status=status,
             error={"code": int(exc.code), "msg": exc.msg},
             elapsed_ms=int((time.perf_counter() - started) * 1000),
+            generation_mode="m1_authorized" if m1 is not None else "mock_static",
+            m1_attempt_id=m1.attempt_id if m1 is not None else None,
+            budget_release_error=release_error,
         )
+
+    submitted_sha: str | None = None
+    if m1 is not None:
+        # 提交前：读 story.json 原始字节。读取失败仍属"未提交"，必须释放预留。
+        try:
+            payload = files.story.read_bytes()
+        except OSError as exc:
+            release_error = _release_on_failure(m1)
+            code = ErrorCode.NOT_FOUND if isinstance(exc, FileNotFoundError) else ErrorCode.UNAVAILABLE
+            logger.error("读取 story.json 失败（%s），已尝试释放 M1 预留：%s", files.story, exc)
+            return PageRunResult(
+                page_id=page_id,
+                page_no=page_no,
+                status="failed",
+                error={"code": int(code), "msg": f"读取故事结果失败：{exc}"},
+                elapsed_ms=int((time.perf_counter() - started) * 1000),
+                story=story,
+                generation_mode="m1_authorized",
+                m1_attempt_id=m1.attempt_id,
+                budget_release_error=release_error,
+            )
+
+        # 提交后：submit 失败可能意味着 M1 已进入 UNKNOWN，不得假定未提交，
+        # 也不得自行释放；由调用方按错误码查询/对账。
+        try:
+            submitted_sha = m1.submit_story_bytes(payload)
+        except AppError as exc:
+            return PageRunResult(
+                page_id=page_id,
+                page_no=page_no,
+                status="failed",
+                error={"code": int(exc.code), "msg": exc.msg},
+                elapsed_ms=int((time.perf_counter() - started) * 1000),
+                story=story,
+                generation_mode="m1_authorized",
+                m1_attempt_id=m1.attempt_id,
+            )
 
     degraded = list(story.degraded)
     story_url = asset_url(settings, files.story)
@@ -185,6 +261,9 @@ def run_page(
         video_error=video_error,
         elapsed_ms=int((time.perf_counter() - started) * 1000),
         story=story,
+        generation_mode="m1_authorized" if m1 is not None else "mock_static",
+        m1_attempt_id=m1.attempt_id if m1 is not None else None,
+        m1_result_sha256=submitted_sha,
     )
 
 
