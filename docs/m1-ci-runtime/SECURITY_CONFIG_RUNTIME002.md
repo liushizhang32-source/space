@@ -24,6 +24,12 @@ sidecars and manifests remain blocked even in local mode. dev/production with
 blocked can initialize, but cannot publish assets. Unknown environment values
 never fall back to local.
 
+The prior HTTP harness expected anonymous OCR/VLM JSON downloads. That
+expectation conflicts with V0.8.1's explicit C1/C2 denial. The candidate keeps
+the same complete Schema/page assertions on server-owned fixture bytes and
+adds HTTP 503/BLOCKED assertions. It does not open C1/C2 to satisfy the old
+transport expectation. This exposure change also requires owner approval.
+
 All original M1 tests remain byte-identical. The new required Windows
 m1-runtime job executes every test_m1_*.py: 226 original tests plus 16 real-app
 configuration and mount tests, exactly 242 with no skipped/xfail results.
