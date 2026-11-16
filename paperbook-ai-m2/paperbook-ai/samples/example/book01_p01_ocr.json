@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0",
+  "book_id": "book01",
+  "page_id": "book01_p01",
+  "page_no": 1,
+  "status": "ok",
+  "image_width": 1240,
+  "image_height": 1754,
+  "text_blocks": [
+    {
+      "block_id": "book01_p01_t01",
+      "order": 1,
+      "text": "小兔子找胡萝卜",
+      "bbox": [
+        106,
+        1205,
+        486,
+        1272
+      ],
+      "confidence": 0.9922
+    },
+    {
+      "block_id": "book01_p01_t02",
+      "order": 2,
+      "text": "森林里，小兔子发现了一根胡萝卜。",
+      "bbox": [
+        102,
+        1300,
+        787,
+        1359
+      ],
+      "confidence": 0.9969
+    },
+    {
+      "block_id": "book01_p01_t03",
+      "order": 3,
+      "text": "它高兴地跳了起来。",
+      "bbox": [
+        107,
+        1382,
+        479,
+        1437
+      ],
+      "confidence": 0.9994
+    }
+  ],
+  "page_confidence": 0.9966,
+  "elapsed_ms": 4197
+}

@@ -1,0 +1,18 @@
+{
+  "protocol": "m1-vision-worker/0.1",
+  "identity": {
+    "job_id": "job_example_001",
+    "page_id": "book01_p01",
+    "generation_id": "gen_example_001",
+    "input_revision": 3,
+    "epoch": 7,
+    "attempt_id": "att_example_001",
+    "fencing_token": "tok_example_9f2c41d7"
+  },
+  "code": 0,
+  "msg": "ok",
+  "artifacts": {
+    "c2": "json/book01_p01_vlm.json",
+    "sidecar": "json/book01_p01_vlm.vision_refs.json"
+  }
+}

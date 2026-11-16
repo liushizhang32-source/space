@@ -1,0 +1,29 @@
+services:
+  vlm:
+    image: vllm/vllm-openai:latest
+    container_name: paperbook-vlm
+    restart: unless-stopped
+    ports:
+      - "8100:8000"
+    volumes:
+      # 权重缓存：企业赛无外网时，把这里换成已下载好的本地目录
+      - ${HF_CACHE:-~/.cache/huggingface}:/root/.cache/huggingface
+    command:
+      - --model
+      - ${VLM_MODEL:-Qwen/Qwen2.5-VL-7B-Instruct}
+      - --served-model-name
+      - ${VLM_NAME:-qwen2.5-vl-7b-instruct}
+      - --limit-mm-per-prompt
+      - image=2
+      - --max-model-len
+      - "8192"
+      - --gpu-memory-utilization
+      - "0.90"
+    shm_size: "16gb"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

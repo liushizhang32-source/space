@@ -1,0 +1,224 @@
+contract  : ok（字段合规，但阶段失败）
+[STAGE] vlm 失败 code=2001 0ms: RuntimeError
+        详情：data/logs/book03_p01_vlm.error.json
+  PASS  test_ids.test_book_id_rules
+  PASS  test_ids.test_derived_ids
+  PASS  test_ids.test_make_page_id_pads_two_digits
+  PASS  test_ids.test_page_no_range
+  PASS  test_ids.test_parse_page_id_roundtrip
+  PASS  test_contracts.test_clamp_bbox_normalizes_and_rejects_degenerate
+  PASS  test_contracts.test_extra_fields_are_opt_in
+  PASS  test_contracts.test_failed_document_keeps_contract
+  PASS  test_contracts.test_ocr_document_empty_page_is_not_failure
+  PASS  test_contracts.test_ocr_document_orders_blocks_and_weights_confidence
+  PASS  test_contracts.test_scale_restores_original_coordinates
+  PASS  test_contracts.test_unknown_fields_are_allowed
+  PASS  test_contracts.test_validator_catches_bad_bbox_and_order
+  PASS  test_contracts.test_vlm_document_and_validation
+  PASS  test_paddle_normalize.test_available_reports_missing_dependency_without_raising
+  PASS  test_paddle_normalize.test_normalize_v2_empty_and_malformed
+  PASS  test_paddle_normalize.test_normalize_v2_single_page
+  PASS  test_paddle_normalize.test_normalize_v3_dict
+  PASS  test_paddle_normalize.test_normalize_v3_object_with_json_attr
+  PASS  test_paddle_normalize.test_normalize_v3_wrapped_in_res
+  PASS  test_paddle_normalize.test_poly_to_bbox
+  PASS  test_metrics.test_cer_and_accuracy
+  PASS  test_metrics.test_cer_whitespace_insensitive
+  PASS  test_metrics.test_levenshtein_basic
+  PASS  test_metrics.test_normalize_strips_whitespace_only
+  PASS  test_index.test_build_from_vlm
+  PASS  test_index.test_empty_objects_page
+  PASS  test_index.test_explain_contains_label
+  PASS  test_index.test_failed_document_rejected
+  PASS  test_index.test_hit_inside_picks_smallest_area
+  PASS  test_index.test_hit_with_tolerance_near_edge
+  PASS  test_index.test_merge_annotations_keeps_explanation_and_polygon
+  PASS  test_index.test_miss_far_away
+  PASS  test_index.test_nearest_fallback_for_small_object
+  PASS  test_index.test_save_and_load_roundtrip
+  PASS  test_mask.test_build_segmenter_auto_and_unknown
+  PASS  test_mask.test_grabcut_segmenter_contract
+  PASS  test_mask.test_hit_uses_polygon_not_bbox
+  PASS  test_mask.test_null_segmenter_returns_bbox_polygon
+  PASS  test_mask.test_point_in_polygon
+  PASS  test_mask.test_polygon_area_square_and_triangle
+  PASS  test_mask.test_with_masks_merges_polygons
+  PASS  test_schema_compat.test_blocks_are_capped_at_99
+  PASS  test_schema_compat.test_builder_rejects_non_bool_safety
+[env] .env 已加载（OCR=paddle, VLM=http）
+page_id   : book03_p01
+  PASS  test_schema_compat.test_cli_exits_5_when_vlm_stage_fails
+[env] .env 已加载（OCR=paddle, VLM=http）
+page_id   : book01_p01
+ocr.json  : C:\Users\zhc\Documents\deepseek-harness\default-workspace\paperbook-ai\tests\.tmp\case_87b9d6501b\data\json\book01_p01_ocr.json  [ok] blocks=1 conf=0.99 0ms
+contract  : ok
+  PASS  test_schema_compat.test_cli_only_ocr_never_builds_vlm_backend
+[env] .env 已加载（OCR=paddle, VLM=http）
+page_id   : book02_p01
+vlm.json  : C:\Users\zhc\Documents\deepseek-harness\default-workspace\paperbook-ai\tests\.tmp\case_139f6b662f\data\json\book02_p01_vlm.json  [empty] objects=0 0ms
+contract  : ok
+  PASS  test_schema_compat.test_cli_only_vlm_never_builds_ocr_backend
+  PASS  test_schema_compat.test_exif_bbox_stays_inside_raw_frame
+  PASS  test_schema_compat.test_exif_orientation_keeps_raw_coordinates
+  PASS  test_schema_compat.test_failed_vlm_document_is_removed
+  PASS  test_schema_compat.test_ocr_failed_keys_exact
+  PASS  test_schema_compat.test_ocr_ok_keys_exact
+  PASS  test_schema_compat.test_parse_bool_handles_strings
+  PASS  test_schema_compat.test_parse_flags_normalizes
+  PASS  test_schema_compat.test_parse_safety_is_fail_closed
+  PASS  test_schema_compat.test_run_ocr_only_skips_vlm
+  PASS  test_schema_compat.test_run_vlm_only_skips_ocr
+  PASS  test_schema_compat.test_vlm_ok_and_empty_keys_exact
+  PASS  test_schema_compat.test_vlm_parse_treats_false_string_as_false
+  PASS  test_schema_compat.test_vlm_status_enum_excludes_failed
+  PASS  test_failure_paths.test_builder_requires_explicit_safety
+  PASS  test_failure_paths.test_exported_vlm_schema_excludes_failed
+  PASS  test_failure_paths.test_malformed_ocr_data_does_not_crash
+  PASS  test_failure_paths.test_ocr_builder_exception_becomes_stage_error
+  PASS  test_failure_paths.test_stale_vlm_file_is_removed_when_stage_fails
+  PASS  test_failure_paths.test_timeout_maps_to_2002
+  PASS  test_failure_paths.test_validator_rejects_vlm_failed_status
+  PASS  test_failure_paths.test_validator_requires_objects_when_ok
+  PASS  test_failure_paths.test_validator_requires_zero_confidence_for_empty_ocr
+  PASS  test_failure_paths.test_vlm_result_requires_explicit_safety
+  PASS  test_failure_paths.test_vlm_returning_none_is_a_stage_error
+  PASS  test_explain.test_backend_without_chat_raw_raises
+  PASS  test_explain.test_explain_objects_empty_labels_skips_call
+  PASS  test_explain.test_explain_objects_ignores_blank_and_extra_keys
+  PASS  test_explain.test_explain_objects_parses_mapping
+  PASS  test_explain.test_explanations_survive_save_load
+  PASS  test_explain.test_with_explanations_merges_and_explain_prefers_cached
+  PASS  test_tap_eval.test_norm_label_aliases
+  PASS  test_tap_eval.test_sample_background_avoids_objects
+  PASS  test_tap_eval.test_sample_inside_all_points_inside
+  PASS  test_tap_eval.test_summarize_metrics
+  PASS  test_pipeline.test_backend_failure_writes_failed_ocr_but_no_vlm_file
+  PASS  test_pipeline.test_empty_page_becomes_empty_status
+  PASS  test_pipeline.test_large_image_bbox_stays_in_original_frame
+  PASS  test_pipeline.test_output_survives_reload_and_validates
+  PASS  test_pipeline.test_pipeline_blocks_nonempty_flags_with_3004
+  PASS  test_pipeline.test_pipeline_blocks_untrusted_safety_with_3004
+  PASS  test_pipeline.test_run_page_writes_both_contract_files
+  PASS  test_worker.test_absolute_image_path_is_rejected
+[m2-worker] stage=ocr page=book01_p01 code=0
+[m2-worker] stage=vlm page=book01_p01 code=9001 transient=False
+  PASS  test_worker.test_backend_none_is_contract_error
+  PASS  test_worker.test_missing_identity_is_bad_request
+[m2-worker] stage=ocr page=book01_p01 code=0
+  PASS  test_worker.test_ocr_empty_is_success_not_failure
+[m2-worker] stage=ocr page=book01_p01 code=0
+  PASS  test_worker.test_ocr_success_writes_c1_and_result
+  PASS  test_worker.test_path_traversal_is_rejected
+[m2-worker] stage=ocr page=book01_p01 code=2002 transient=True
+  PASS  test_worker.test_timeout_maps_to_2002_transient
+[m2-worker] stage=ocr page=book01_p01 code=1006 transient=False
+  PASS  test_worker.test_unsupported_image_bytes_rejected_before_backend
+[m2-worker] stage=ocr page=book01_p01 code=0
+[m2-worker] stage=vlm page=book01_p01 code=3004 transient=False
+  PASS  test_worker.test_vlm_safety_block_writes_no_artifacts
+[m2-worker] stage=ocr page=book01_p01 code=0
+[m2-worker] stage=vlm page=book01_p01 code=0
+  PASS  test_worker.test_vlm_success_requires_c2_and_sidecar_with_sha_binding
+[m2-worker] stage=ocr page=book01_p01 code=0
+[m2-worker] stage=vlm page=book01_p01 code=0
+  PASS  test_worker.test_vlm_uses_inputs_c1_text
+[m2-worker] stage=ocr page=book01_p01 code=0
+  PASS  test_worker_v121.test_artifact_colliding_with_result_path_is_rejected
+[m2-worker] stage=ocr page=book01_p01 code=0
+[m2-worker] stage=vlm page=book01_p01 code=9001 transient=False
+  PASS  test_worker_v121.test_c1_cross_page_is_rejected
+[m2-worker] stage=ocr page=book01_p01 code=0
+[m2-worker] stage=vlm page=book01_p01 code=9001 transient=False
+  PASS  test_worker_v121.test_c1_old_revision_size_is_rejected
+[m2-worker] stage=ocr page=book01_p01 code=0
+[m2-worker] stage=vlm page=book01_p01 code=9001 transient=False
+  PASS  test_worker_v121.test_c1_sha256_mismatch_is_rejected
+  PASS  test_worker_v121.test_child_process_timeout_is_killed_and_reaped
+  PASS  test_worker_v121.test_confidence_rejects_bool_nan_and_string
+[m2-worker] stage=ocr page=book01_p01 code=0
+  PASS  test_worker_v121.test_existing_output_is_not_overwritten
+[m2-worker] stage=ocr page=book01_p01 code=0
+[m2-worker] stage=vlm page=book01_p01 code=9001 transient=False
+[m2-worker] FATAL 请求不可读: StrictJsonError
+  PASS  test_worker_v121.test_image_sha256_mismatch_is_rejected
+[m2-worker] stage=ocr page=book01_p01 code=0
+[m2-worker] stage=vlm page=book01_p01 code=9001 transient=False
+  PASS  test_worker_v121.test_missing_c1_is_contract_error_not_internal_ocr
+[m2-worker] stage=ocr page=book01_p01 code=0
+[m2-worker] stage=vlm page=book01_p01 code=3004 transient=False
+  PASS  test_worker_v121.test_missing_flags_field_is_blocked
+  PASS  test_worker_v121.test_nan_literal_is_rejected_before_parsing
+[m2-worker] stage=ocr page=book01_p01 code=0
+[m2-worker] stage=vlm page=book01_p01 code=1004 transient=False
+  PASS  test_worker_v121.test_objects_overflow_is_structured_1004
+[m2-worker] stage=ocr page=book01_p01 code=1004 transient=False
+  PASS  test_worker_v121.test_ocr_blocks_over_limit_is_structured_1004
+[m2-worker] stage=ocr page=book01_p01 code=0
+  PASS  test_worker_v121.test_path_collision_between_artifacts_is_rejected
+[m2-worker] stage=ocr page=book01_p01 code=0
+[m2-worker] stage=vlm page=book01_p01 code=3004 transient=False
+  PASS  test_worker_v121.test_raw_flags_loss_is_detected
+[m2-worker] stage=ocr page=book01_p01 code=0
+[m2-worker] stage=vlm page=book01_p01 code=3004 transient=False
+  PASS  test_worker_v121.test_raw_flags_loss_reported_as_mismatch
+[m2-worker] stage=ocr page=book01_p01 code=0
+[m2-worker] stage=vlm page=book01_p01 code=3004 transient=False
+  PASS  test_worker_v121.test_safety_blank_flag_is_blocked
+[m2-worker] stage=ocr page=book01_p01 code=0
+[m2-worker] stage=vlm page=book01_p01 code=3004 transient=False
+  PASS  test_worker_v121.test_safety_flags_not_list_is_blocked
+[m2-worker] stage=ocr page=book01_p01 code=0
+[m2-worker] stage=vlm page=book01_p01 code=3004 transient=False
+  PASS  test_worker_v121.test_safety_missing_source_is_blocked
+[m2-worker] stage=ocr page=book01_p01 code=0
+[m2-worker] stage=vlm page=book01_p01 code=3004 transient=False
+  PASS  test_worker_v121.test_safety_number_one_is_blocked
+[m2-worker] stage=ocr page=book01_p01 code=0
+[m2-worker] stage=vlm page=book01_p01 code=3004 transient=False
+  PASS  test_worker_v121.test_safety_object_missing_is_blocked
+[m2-worker] stage=ocr page=book01_p01 code=0
+[m2-worker] stage=vlm page=book01_p01 code=3004 transient=False
+  PASS  test_worker_v121.test_safety_pass_with_flag_is_conflict
+[m2-worker] stage=ocr page=book01_p01 code=0
+[m2-worker] stage=vlm page=book01_p01 code=3004 transient=False
+  PASS  test_worker_v121.test_safety_string_true_is_blocked
+[m2-worker] stage=ocr page=book01_p01 code=0
+[m2-worker] stage=vlm page=book01_p01 code=0
+  PASS  test_worker_v121.test_sidecar_candidate_contract_fields
+[m2-worker] stage=ocr page=book01_p01 code=0
+  PASS  test_worker_v121.test_symlinked_output_is_rejected
+[m2-worker] stage=ocr page=book01_p01 code=0
+[m2-worker] stage=vlm page=book01_p01 code=3004 transient=False
+  PASS  test_worker_v121.test_unknown_flag_is_blocked
+  PASS  test_strictjson.test_duplicate_flags_rejected
+  PASS  test_strictjson.test_duplicate_inside_array_element_rejected
+  PASS  test_strictjson.test_duplicate_key_nested_object_rejected
+  PASS  test_strictjson.test_duplicate_key_top_level_rejected
+  PASS  test_strictjson.test_duplicate_pass_rejected
+  PASS  test_strictjson.test_duplicate_safety_object_rejected
+  PASS  test_strictjson.test_non_finite_number_rejected
+  PASS  test_strictjson.test_pipeline_blocks_unsafe_output_without_c2
+  PASS  test_strictjson.test_request_with_duplicate_keys_is_rejected
+  PASS  test_strictjson.test_vlm_parse_refuses_to_lose_flags
+[m2-worker] stage=ocr page=book01_p01 code=0
+[m2-worker] stage=vlm page=book01_p01 code=3004 transient=False
+  PASS  test_strictjson.test_worker_blocks_unsafe_output_without_artifacts
+  PASS  test_backend_task.test_cancel_connection_error_is_recorded
+  PASS  test_backend_task.test_cancel_http_error_is_recorded
+  PASS  test_backend_task.test_cancel_with_confirmed_response
+  PASS  test_backend_task.test_cancel_with_contradictory_body_is_not_trusted
+  PASS  test_backend_task.test_cancel_with_full_identity_echo_is_confirmed
+  PASS  test_backend_task.test_cancel_with_non_json_body_is_not_trusted
+  PASS  test_backend_task.test_cancel_with_wrong_generation_is_not_trusted
+  PASS  test_backend_task.test_cancel_with_wrong_task_id_is_not_trusted
+  PASS  test_backend_task.test_cancel_without_endpoint_is_unconfirmed
+  PASS  test_backend_task.test_finish_confirms_completed_call
+  PASS  test_backend_task.test_late_result_after_cancel_is_ignored
+  PASS  test_backend_task.test_new_task_binds_identity
+  PASS  test_backend_task.test_record_roundtrip
+  PASS  test_backend_task.test_response_without_explicit_confirmation_is_not_trusted
+[m2-worker] stage=ocr page=book01_p01 code=0
+[m2-worker] stage=vlm page=book01_p01 code=0
+  PASS  test_backend_task.test_worker_writes_backend_task_record
+
+151 passed, 0 failed
