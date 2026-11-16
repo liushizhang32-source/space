@@ -24,6 +24,9 @@ def main():
     parser.add_argument('--group', required=True, choices=GROUPS)
     parser.add_argument('--preflight', action='store_true')
     args = parser.parse_args()
+    if args.group == 'm1-runtime' and not args.preflight:
+        from m1_runtime_gate import main as m1_main
+        return m1_main(['--target', str(args.target), '--output', str(args.output)])
     target = args.target.resolve()
     report_dir = args.output.resolve()/args.group
     out = report_dir/('attempt-'+uuid.uuid4().hex[:12])
@@ -65,7 +68,8 @@ def main():
             TMPDIR=str(out/'tmp'), TEMP=str(out/'tmp'), TMP=str(out/'tmp'),
             PATH=os.pathsep.join([str(Path(sys.executable).parent), os.defpath]),
             PYTHONIOENCODING='utf-8', PYTHONDONTWRITEBYTECODE='1', PYTEST_DISABLE_PLUGIN_AUTOLOAD='1',
-            GENERATION_BACKEND='mock', TTS_ENGINE='silent', TTS_HTTP_URL='', TTS_API_KEY='',
+            GENERATION_BACKEND='mock', M1_DEPLOYMENT_ENV='local', M1_ASSET_MODE='offline_mock',
+            TTS_ENGINE='silent', TTS_HTTP_URL='', TTS_API_KEY='',
             LLM_BASE_URL='', LLM_MODEL='', LLM_API_KEY='', SAFETY_ENABLED='0', SAFETY_BLOCKLIST='',
             ASSET_BASE_URL='http://127.0.0.1:8001', FFMPEG_PATH=ff, FFPROBE_PATH=probe,
             VIDEO_FONT=os.environ.get('VIDEO_FONT', ''), VIDEO_RESOLUTION='720x1280', VIDEO_FPS='25')

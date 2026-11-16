@@ -20,7 +20,7 @@ def main():
     tested_revisions = set()
     if os.environ.get('CI_DEPENDENCY_RESULTS'):
         dependencies = json.loads(os.environ['CI_DEPENDENCY_RESULTS'])
-        all_green = (set(dependencies) == {'resolve', 'infrastructure', 'tests'}
+        all_green = (set(dependencies) == {'resolve', 'infrastructure', 'tests', 'm1-runtime'}
                      and all(d.get('result') == 'success' for d in dependencies.values()))
     for name, (expected, _) in GROUPS.items():
         evidence_error = None
@@ -66,7 +66,7 @@ def main():
         lines.append('ERROR: a required upstream job failed, was cancelled or did not execute.')
     if len(tested_revisions) != 1:
         all_green = False
-        lines.append('ERROR: all eight groups must report the same resolved test SHA.')
+        lines.append('ERROR: all required groups must report the same resolved test SHA.')
     else:
         lines.append('Tested SHA: `'+next(iter(tested_revisions))+'`')
     text = '\n'.join(lines)+'\n'
