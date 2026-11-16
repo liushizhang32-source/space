@@ -1,0 +1,494 @@
+"""One M1 owner for attempts, deadlines, cancellation, retry, drain and cleanup."""
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass, field
+import json
+import hashlib
+import logging
+import os
+from pathlib import Path
+import shutil
+import tempfile
+import threading
+import time
+from typing import Callable
+import uuid
+from types import MappingProxyType
+
+from .tree import ContainmentError, drain, start_tree
+
+logger = logging.getLogger(__name__)
+RETRY_CODES = frozenset({2001, 2002, 2003, 2004, 3007, 3008})
+VISION_RETRY_CODES = RETRY_CODES & {2001, 2002, 2003, 2004}
+
+
+class VisionError(Exception):
+    def __init__(self, code, msg, *, transient=False):
+        super().__init__(msg)
+        self.code, self.msg, self.transient = code, msg, transient
+
+
+class Cancelled(VisionError):
+    def __init__(self):
+        super().__init__(2004, 'Generation cancelled or superseded')
+
+
+def retryable(error, stage):
+    codes = VISION_RETRY_CODES if stage in ('ocr', 'vlm') else RETRY_CODES
+    return (type(error.code) is int and error.code in codes and error.transient is True
+            and not (error.code == 2001 and 'safety' in error.msg.casefold()))
+
+
+@dataclass(frozen=True)
+class Identity:
+    job_id: str
+    page_id: str
+    generation_id: str
+    input_revision: int
+    epoch: int
+    attempt_id: str
+    fencing_token: str
+
+
+@dataclass
+class Generation:
+    job_id: str
+    page_id: str
+    generation_id: str
+    input_revision: int
+    epoch: int
+    status: str = 'queued'
+    cancel: threading.Event = field(default_factory=threading.Event)
+    identity: Identity | None = None
+    worker_state: str = 'idle'
+    c2_sha256: str | None = None
+    error_code: int | None = None
+    backend_execution: dict | None = None
+
+
+class Fences:
+    """In-memory like the current Jobs store. NOT a restart-durable DB claim.
+
+    The existing public Jobs.create keeps API-level set-of-pages idempotency.
+    This registry handles only the internal page lease within that job.
+    """
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.pages: dict[str, Generation] = {}
+        self.serial: dict[str, threading.Lock] = {}
+        # One shared registry per M1 service. Unknown HTTP resources deliberately
+        # share a conservative capacity-one lease, including across pages/adapters.
+        self.backend_resources = {}
+
+    def begin(self, job_id, page_id, *, input_revision=1, force=False):
+        if type(input_revision) is not int or input_revision < 1:
+            raise ValueError('input_revision must be a positive integer')
+        with self.lock:
+            old = self.pages.get(page_id)
+            if old and old.backend_execution and old.backend_execution['status'] != 'confirmed':
+                if force:
+                    self.cancel(old)
+                raise VisionError(9001, 'backend_execution_unconfirmed')
+            if old and old.status in {'queued', 'running'} and not force:
+                if old.job_id == job_id and old.input_revision == input_revision:
+                    return old, False
+                raise VisionError(2003, 'Page already has an active generation')
+            if old:
+                old.cancel.set()
+                if old.status in {'queued', 'running'}:
+                    old.status = 'cancelled'
+            record = Generation(job_id, page_id, uuid.uuid4().hex, input_revision,
+                                old.epoch+1 if old else 1)
+            self.pages[page_id] = record
+            self.serial.setdefault(page_id, threading.Lock())
+            return record, True
+
+    def current(self, record):
+        return self.pages.get(record.page_id) is record and not record.cancel.is_set()
+
+    def check(self, record, identity=None):
+        with self.lock:
+            if (not self.current(record) or record.status in {'cancelled', 'blocked', 'failed', 'done'}
+                    or identity is not None and record.identity != identity):
+                raise Cancelled()
+
+    def attempt(self, record):
+        with self.lock:
+            self.check(record)
+            if record.backend_execution and record.backend_execution['status'] != 'confirmed':
+                raise VisionError(9001, 'backend_execution_unconfirmed')
+            record.status = 'running'
+            record.c2_sha256 = None
+            record.identity = Identity(record.job_id, record.page_id, record.generation_id,
+                record.input_revision, record.epoch, uuid.uuid4().hex, uuid.uuid4().hex)
+            return record.identity
+
+    def cancel(self, record):
+        with self.lock:
+            record.cancel.set()
+            if record.status in {'queued', 'running'}:
+                record.status = 'cancelled'
+
+
+@dataclass(frozen=True)
+class WorkerSpec:
+    """Registered by M1 configuration, never taken from a worker response/request.
+
+    argv is an admin-reviewed single-attempt command prefix; request.json is
+    appended. source_id identifies the M1 trust registration, not a claim in C2.
+    Environment is allowlisted, not inherited from the parent model credentials.
+    """
+    argv: tuple[str, ...]
+    source_id: str
+    environment: tuple[tuple[str, str], ...] = field(default=(), repr=False)
+    execution_scope: str = 'process_tree'
+    backend: object = field(default=None, repr=False)
+    # Trusted deployment config only; aliases for the same model MUST share this
+    # key. The default serializes all external services rather than guessing IDs.
+    backend_resource_id: str = 'shared-http-backend'
+
+
+@dataclass(frozen=True)
+class Snapshot:
+    identity: Identity
+    source_id: str
+    documents: object
+    reported_code: int = 0
+    image_sha256: str | None = None
+    c1_sha256: str | None = None
+
+    def __post_init__(self):
+        object.__setattr__(self, 'documents', MappingProxyType(dict(self.documents)))
+
+
+def unique_json(raw):
+    def pairs(items):
+        doc = {}
+        for key, value in items:
+            if key in doc:
+                raise ValueError('Duplicate JSON key')
+            doc[key] = value
+        return doc
+    text=bytes(raw).decode('utf-8','strict') if isinstance(raw,(bytes,bytearray)) else raw
+    result=json.loads(text,object_pairs_hook=pairs,parse_constant=lambda x: (_ for _ in ()).throw(ValueError('Nonfinite JSON')))
+    # json.loads otherwise admits escaped lone surrogates and numeric overflow.
+    json.dumps(result,ensure_ascii=False,allow_nan=False).encode('utf-8','strict')
+    return result
+
+
+def confined_file(root, name, *, maximum=4*1024*1024):
+    if not isinstance(name, str) or '\\' in name or ':' in name:
+        raise VisionError(1002, 'Invalid private artifact path')
+    rel = Path(name)
+    if rel.is_absolute() or rel.anchor or name.startswith('/') or '..' in rel.parts or not rel.parts:
+        raise VisionError(1002, 'Artifact path traversal rejected')
+    path = root/rel
+    if any(p.is_symlink() or getattr(p, 'is_junction', lambda: False)()
+           for p in [path, *path.parents] if p != root.parent and p.is_relative_to(root)):
+        raise VisionError(1002, 'Artifact symlink/junction rejected')
+    try:
+        path = path.resolve(strict=True)
+    except OSError as exc:
+        raise VisionError(1002, 'Artifact missing/unreadable') from exc
+    if not path.is_relative_to(root.resolve()) or not path.is_file() or path.stat().st_nlink != 1:
+        raise VisionError(1002, 'Artifact escapes owned workspace or is hardlinked')
+    if not 0 < path.stat().st_size <= maximum:
+        raise VisionError(1002, 'Artifact empty or oversized')
+    return path
+
+
+def read_confined_bytes(root, name, *, maximum=4*1024*1024):
+    """Read/hash the same validated handle on Windows; no reopen after path checks."""
+    if os.name == 'nt':
+        from ..integration_reference.files import WindowsAssetReader
+        from ..integration_reference.authority import Denied
+        try:
+            raw=WindowsAssetReader(root,max_bytes=maximum).read_bytes(name)
+            if not raw: raise VisionError(1002,'Artifact empty')
+            return raw
+        except Denied as exc:
+            raise VisionError(1002,'Artifact handle validation rejected') from exc
+    # Legacy non-Windows compatibility remains separately scoped, not a claim of
+    # equivalent POSIX handle guarantees or deployment certification.
+    return confined_file(root,name,maximum=maximum).read_bytes()
+
+
+def validate_result_envelope(doc, identity):
+    required={'protocol','identity','code','msg','artifacts'}
+    if (type(doc) is not dict or not required <= set(doc)
+            or set(doc)-required-{'transient'} or doc['protocol']!='m1-vision-worker/0.1'
+            or type(doc['code']) is not int or type(doc['msg']) is not str
+            or type(doc['artifacts']) is not dict
+            or set(doc['artifacts'])-{'c1','c2','sidecar'}
+            or any(type(v) is not str or not v for v in doc['artifacts'].values())
+            or 'transient' in doc and type(doc['transient']) is not bool):
+        raise ValueError('Worker result violates frozen private envelope')
+    expected=asdict(identity);received=doc['identity']
+    if (type(received) is not dict or set(received)!=set(expected)
+            or any(type(received[k]) is not type(v) or received[k]!=v for k,v in expected.items())):
+        raise ValueError('Worker result identity mismatch')
+
+
+class Supervisor:
+    def __init__(self, private_root, *, deadline=30.0, backoff=1.0, cgroup_root=None,
+                 audit: Callable[[dict], None] | None = None):
+        if not 0 < deadline <= 30 or backoff != 1:
+            raise ValueError('Deadline must be (0,30]; backoff is exactly one second')
+        self.root = Path(private_root).resolve()
+        self.root.mkdir(parents=True, exist_ok=True)
+        self.deadline, self.backoff, self.cgroup_root = deadline, backoff, cgroup_root
+        self.audit = audit or (lambda event: None)
+        self._condition = threading.Condition()
+        self._closing = False
+        self._runs = {}
+        self.quarantined = []
+
+    def emit(self, event, identity, **extra):
+        self.audit(dict(event=event, monotonic=time.monotonic(), **asdict(identity), **extra))
+
+    def run(self, record, fences, stage, spec_for_attempt, image_path, *, c1=None):
+        registration = object()
+        with self._condition:
+            if self._closing:
+                raise VisionError(2004, 'Supervisor shutting down')
+            self._runs[registration] = (threading.get_ident(), record, fences)
+        try:
+            return self._run(record, fences, stage, spec_for_attempt, image_path, c1=c1)
+        finally:
+            with self._condition:
+                self._runs.pop(registration)
+                self._condition.notify_all()
+
+    def close(self):
+        """Shared idempotent drain barrier; never treat a cancelled waiter as a kill.
+
+        Synchronous service API: an async caller must shield/drain the real
+        executor Future as Member3Jobs.work already does, not cancel its wrapper.
+        """
+        with self._condition:
+            if any(owner == threading.get_ident() for owner, _, _ in self._runs.values()):
+                raise RuntimeError('Cannot close supervisor from its own worker caller')
+            self._closing = True
+            for _, record, fences in self._runs.values():
+                fences.cancel(record)
+            while self._runs:
+                self._condition.wait()
+            if self.quarantined:
+                raise ContainmentError('Shutdown has quarantined attempts; drain not proven')
+
+    def _run(self, record, fences, stage, spec_for_attempt, image_path, *, c1=None):
+        if stage not in {'ocr', 'vlm'}:
+            raise ValueError('This supervisor owns OCR/VLM only')
+        # Force replacement can revoke a lease immediately, but cannot start until
+        # the old generation's actual process tree and workspace have drained.
+        with fences.serial[record.page_id]:
+            for number in (1, 2):
+                identity = fences.attempt(record)
+                try:
+                    spec = spec_for_attempt(number)
+                    return self._once(record, fences, identity, stage, spec, image_path, c1=c1)
+                except VisionError as exc:
+                    fences.check(record)
+                    if number == 2 or not retryable(exc, stage):
+                        raise
+                    self.emit('backoff', identity, seconds=1, code=exc.code)
+                    if record.cancel.wait(self.backoff):
+                        raise Cancelled() from exc
+            raise AssertionError('Unreachable')
+
+    def _once(self, record, fences, identity, stage, spec, image_path, *, c1=None):
+        work = Path(tempfile.mkdtemp(prefix='attempt-', dir=self.root))
+        tree, reaped = None, False
+        record.worker_state = 'starting'
+        task_ref = None
+        try:
+            image_raw = read_confined_bytes(Path(image_path).absolute().parent,Path(image_path).name,maximum=16*1024*1024)
+            image_hash = hashlib.sha256(image_raw).hexdigest()
+            image_copy = work/('input'+Path(image_path).suffix)
+            image_copy.write_bytes(image_raw)
+            request = dict(protocol='m1-vision-worker/0.1', **asdict(identity), stage=stage,
+                image_path=str(image_copy), image_sha256=image_hash, result_path='result.json',
+                outputs={'c1':f'json/{identity.page_id}_ocr.json',
+                         'c2':f'json/{identity.page_id}_vlm.json',
+                         'sidecar':f'json/{identity.page_id}_refs.json'})
+            if stage == 'vlm':
+                from .gate import Gate
+                Gate.bound_c1(c1, identity, image_hash)
+                (work/'c1.json').write_bytes(c1.documents['c1'])
+                request['inputs'] = {'c1': str(work/'c1.json')}
+                request['c1_binding'] = dict(identity=asdict(c1.identity),
+                    sha256=hashlib.sha256(c1.documents['c1']).hexdigest(), image_sha256=image_hash)
+            (work/'request.json').write_text(json.dumps(request), encoding='utf-8')
+            env = {k: os.environ[k] for k in ('SystemRoot', 'WINDIR', 'COMSPEC', 'SYSTEMDRIVE') if k in os.environ}
+            env.update(PATH=os.pathsep.join([str(Path(spec.argv[0]).parent), os.defpath]),
+                PYTHONDONTWRITEBYTECODE='1', PYTHONIOENCODING='utf-8',
+                TEMP=str(work), TMP=str(work), TMPDIR=str(work))
+            allowed = {'VISION_BACKEND', 'VISION_MODEL', 'VISION_BASE_URL', 'VISION_API_KEY'}
+            supplied = dict(spec.environment)
+            if len(supplied) != len(spec.environment) or set(supplied)-allowed:
+                raise VisionError(1002, 'Worker environment key not allowed')
+            env.update(supplied)
+            for key in ('HOME', 'USERPROFILE', 'XDG_CACHE_HOME', 'HF_HOME', 'PADDLE_HOME'):
+                env[key] = str(work/'cache')
+            if spec.execution_scope not in {'process_tree', 'http_service'}:
+                raise VisionError(1002, 'Unknown backend execution scope')
+            if spec.execution_scope == 'http_service':
+                if spec.backend is None:
+                    raise VisionError(9001, 'backend_execution_unconfirmed')
+                with fences.lock:
+                    fences.check(record, identity)
+                    resource = spec.backend_resource_id
+                    if type(resource) is not str or not resource.strip():
+                        raise VisionError(1002, 'Invalid backend resource registration')
+                    if resource in fences.backend_resources:
+                        raise VisionError(9001, 'backend_execution_unconfirmed: resource leased')
+                    if any(p.backend_execution and p.backend_execution['status'] != 'confirmed'
+                           and not any(lease[0] is p for lease in fences.backend_resources.values())
+                           for p in fences.pages.values()):
+                        raise VisionError(9001, 'backend_execution_unconfirmed: unknown resource')
+                    # Reserve BEFORE task registration/launch: force cannot lose
+                    # the old generation during either operation.
+                    fences.backend_resources[resource] = (record, identity)
+                    record.backend_execution = dict(status='backend_execution_unconfirmed',
+                        identity=asdict(identity), task_ref=None, termination_confirmed=False)
+                reference = spec.backend.task_reference(identity)
+                if type(reference) is not str or not reference.strip():
+                    raise VisionError(9001, 'backend_execution_unconfirmed')
+                task_ref = reference
+                with fences.lock:
+                    record.backend_execution['task_ref'] = task_ref
+            fences.check(record, identity)
+            # Includes process creation, interpreter/model import and result writing.
+            started = time.monotonic()
+            # Arbitrary SDK stdout/stderr can contain injected credentials.
+            # Diagnostics must arrive through the reviewed structured envelope.
+            with open(os.devnull, 'wb') as log:
+                tree = start_tree([*spec.argv, str(work/'request.json')], work, env, log,
+                                  cgroup_root=self.cgroup_root)
+                self.emit('started', identity, pid=tree.process.pid, workdir=str(work))
+                record.worker_state = 'running'
+                try:
+                    while True:
+                        fences.check(record, identity)
+                        tree.observe()
+                        if time.monotonic()-started >= self.deadline:
+                            raise VisionError(2002, 'OCR/VLM attempt wall-clock deadline exceeded', transient=True)
+                        if tree.process.poll() is not None:
+                            break
+                        record.cancel.wait(min(.01, max(0, self.deadline-(time.monotonic()-started))))
+                finally:
+                    record.worker_state = 'draining'
+                    # Also terminate orphan descendants after a normal root exit.
+                    drain(tree, kill=tree.process.poll() is None)
+                    reaped = True
+                    record.worker_state = 'reaped'
+                    self.emit('reaped', identity, pid=tree.process.pid, returncode=tree.process.returncode,
+                              elapsed=time.monotonic()-started, active=0,
+                              member_exit_witness=tree.exit_witness)
+                    if task_ref is not None:
+                        # Trusted M1 adapter, never a Worker self-attestation.
+                        self.settle_backend(record, identity, spec.backend, task_ref,
+                            cancel=record.cancel.is_set() or tree.process.returncode != 0
+                                   or time.monotonic()-started >= self.deadline,
+                            fences=fences, resource_id=spec.backend_resource_id)
+            fences.check(record, identity)
+            raw = read_confined_bytes(work, 'result.json')
+            try:
+                doc = unique_json(raw)
+                validate_result_envelope(doc,identity)
+                if not isinstance(doc, dict) or doc.get('protocol') != 'm1-vision-worker/0.1':
+                    raise ValueError('Protocol mismatch')
+                expected = asdict(identity)
+                received = doc.get('identity')
+                if (type(received) is not dict or set(received) != set(expected)
+                        or any(type(received[k]) is not type(v) or received[k] != v
+                               for k, v in expected.items())):
+                    raise VisionError(1002, 'Worker identity/generation/fencing mismatch')
+                if type(doc.get('code')) is not int or type(doc.get('msg')) is not str:
+                    raise ValueError('Invalid error envelope')
+                empty_ocr = doc['code'] == 3001 and stage == 'ocr'
+                if doc['code'] and not empty_ocr:
+                    # A validated failure is allowed with a nonzero exit, never a success.
+                    raise VisionError(doc['code'], doc['msg'], transient=doc.get('transient') is True)
+                if tree.process.returncode != 0 and not empty_ocr:
+                    raise VisionError(2001, 'Worker exited unsuccessfully')
+                refs = doc['artifacts']
+                if not isinstance(refs, dict) or set(refs) != ({'c1'} if stage == 'ocr' else {'c2', 'sidecar'}):
+                    raise ValueError('Unexpected/missing artifacts')
+                if any(refs[k] != request['outputs'][k] for k in refs):
+                    raise ValueError('Artifact path differs from M1 allocation')
+                documents = {key: read_confined_bytes(work, value) for key, value in refs.items()}
+                if empty_ocr:
+                    # Preserve 3001 as a non-retried empty observation, only when
+                    # the worker supplied a real, valid frozen C1(empty).
+                    from orchestrator.schemas.ocr import OCRData
+                    empty = OCRData.model_validate(unique_json(documents['c1']))
+                    if empty.status != 'empty' or empty.page_id != identity.page_id:
+                        raise ValueError('3001 must carry C1(empty) for this page')
+                    self.emit('ocr_empty', identity, code=3001)
+                return Snapshot(identity, spec.source_id, documents, doc['code'], image_hash,
+                    hashlib.sha256(documents['c1']).hexdigest() if stage == 'ocr' else None)
+            except (ValueError, KeyError, TypeError) as exc:
+                raise VisionError(1002, 'Malformed worker envelope/artifact') from exc
+        finally:
+            try:
+                if task_ref is not None and tree is None:
+                    self.settle_backend(record, identity, spec.backend, task_ref, cancel=True,
+                        fences=fences, resource_id=spec.backend_resource_id)
+            finally:
+                # A start failure is safe only if no running tree escaped containment.
+                # drain errors preserve/quarantine files and prohibit automatic retry.
+                if tree is None or reaped:
+                    try:
+                        shutil.rmtree(work)
+                        self.emit('cleaned', identity, workdir=str(work))
+                    except OSError:
+                        logger.exception('M1 private attempt cleanup failed: %s', work)
+                        # Even cleanup failure must not start another attempt.
+                        raise ContainmentError('Attempt cleanup failed; no retry')
+                else:
+                    record.worker_state = 'quarantined'
+                    self.quarantined.append((identity, tree, work))
+                    logger.error('M1 workspace quarantined, process drain not proven: %s', work)
+
+    @staticmethod
+    def settle_backend(record, identity, backend, task_ref, *, cancel, fences=None, resource_id=None):
+        if record.identity != identity:
+            raise VisionError(9001, 'Late backend confirmation rejected')
+        requested_at = time.time()
+        result = dict(identity=asdict(identity), task_ref=task_ref,
+                      cancel_requested=cancel, requested_at=requested_at,
+                      request_result='failed', termination_confirmed=False,
+                      confirmed_at=None, status='backend_execution_unconfirmed')
+        try:
+            proof = backend.settle(identity, task_ref, cancel=cancel)
+            expected = asdict(identity)
+            received = proof.get('identity') if type(proof) is dict else None
+            if (type(received) is dict and set(received) == set(expected)
+                    and all(type(received[k]) is type(v) and received[k] == v for k,v in expected.items())
+                    and type(proof.get('task_ref')) is str and proof['task_ref'] == task_ref):
+                result['request_result'] = proof.get('request_result')
+                stamp = proof.get('confirmed_at')
+                if (proof.get('termination_confirmed') is True
+                        and proof.get('request_result') in {'cancelled', 'completed'}
+                        and (not cancel or proof['request_result'] == 'cancelled')
+                        and type(stamp) in {int, float} and requested_at <= stamp <= time.time()):
+                    result.update(termination_confirmed=True, confirmed_at=stamp, status='confirmed')
+        except Exception:
+            pass  # Never log adapter exceptions which may contain credentials.
+        # Network callback runs outside the registry lock. Recheck on return;
+        # late/mismatched callbacks can never release another attempt's lease.
+        lock = fences.lock if fences is not None else threading.RLock()
+        with lock:
+            if record.identity != identity:
+                raise VisionError(9001, 'Late backend confirmation rejected')
+            if fences is not None:
+                lease = fences.backend_resources.get(resource_id)
+                if (lease is None or lease[0] is not record or lease[1] != identity
+                        or record.backend_execution.get('task_ref') != task_ref):
+                    raise VisionError(9001, 'Late backend confirmation rejected')
+                if result['termination_confirmed']:
+                    del fences.backend_resources[resource_id]
+            record.backend_execution = result
+        if not result['termination_confirmed']:
+            raise VisionError(9001, 'backend_execution_unconfirmed')

@@ -1,0 +1,27 @@
+"""Persistent deterministic FAKE backend. No network, models or real receipts."""
+import sqlite3
+import threading
+
+
+class FakeProvider:
+    def __init__(self,path,*,supports_idempotency=True,supports_lookup=True):
+        self.supports_idempotency=supports_idempotency; self.supports_lookup=supports_lookup
+        self.lock=threading.RLock(); self.calls=0
+        self.db=sqlite3.connect(path,check_same_thread=False)
+        self.db.execute('CREATE TABLE IF NOT EXISTS fake_tasks(key TEXT PRIMARY KEY, task_ref TEXT)'); self.db.commit()
+
+    def submit(self,key):
+        with self.lock:
+            self.calls+=1
+            old=self.lookup(key)
+            if old and not self.supports_idempotency: raise ValueError('fake non-idempotent duplicate submit')
+            task='FAKE_'+key
+            self.db.execute('INSERT OR IGNORE INTO fake_tasks VALUES(?,?)',(key,task)); self.db.commit()
+            return dict(mode='mock',key=key,task_ref=task,terminal=True)
+
+    def lookup(self,key):
+        with self.lock:
+            row=self.db.execute('SELECT task_ref FROM fake_tasks WHERE key=?',(key,)).fetchone()
+            return dict(mode='mock',key=key,task_ref=row[0],terminal=True) if row else None
+
+    def close(self): self.db.close()

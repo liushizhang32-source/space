@@ -1,0 +1,290 @@
+"""LEASE-001: each test asserts initial state, operation, durable outcome and ownership.
+
+Also rerun all 46 original round2 remediation cases against the opt-in pair.
+"""
+from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
+from dataclasses import asdict, replace
+import os
+from pathlib import Path
+import sqlite3
+import subprocess
+import sys
+
+import pytest
+import test_m1_round2_remediation as original
+from orchestrator.services.mock_core_round2.lease_core import Core
+from orchestrator.services.mock_core_round2.lease_supervisor import Supervisor
+from orchestrator.services.mock_core_round2.lease_runner import run_mock
+from orchestrator.services.mock_core_round2.provider import FakeProvider
+from orchestrator.services.vision_supervisor.gate import Gate
+from orchestrator.services.vision_supervisor.supervisor import Generation
+from orchestrator.services.mock_core_round2.core import RuntimeFences
+from test_m1_vision_supervisor import spec
+
+for _name in dir(original):
+    if _name.startswith('test_'):
+        globals()['test_preserved_' + _name[5:]] = getattr(original, _name)
+
+
+@pytest.fixture
+def rig2(tmp_path):
+    c = Core(tmp_path/'lease.sqlite', clock=lambda: 1000)
+    c.configure_budget('local', 'CNY', 100)
+    p = FakeProvider(tmp_path/'fake.sqlite')
+    image = tmp_path/'image.png'; image.write_bytes(b'synthetic fixture')
+    s = Supervisor(tmp_path/'work', deadline=5)
+    yield c, p, s, Gate({'local-fixture'}), image
+    s.close(); c.close(); p.close()
+
+
+def create(c, page='book01_p03', **kw):
+    return c.create('local', page, deadline_ms=100000, **kw)
+
+
+def run(r, j, **kw):
+    return run_mock(r[0], j['job_id'], r[2], r[3], r[4], (96, 128), kw.pop('worker', spec()), r[1], **kw)
+
+
+def acquire(c, j, resource='vision-fixture'):
+    i = c.identity(j['job_id']); c.register_execution(i, 'ocr', resource=resource)
+    assert c.lease(i)['state'] == 'lease_acquired'
+    return i
+
+
+def no_dispatch(c, i):
+    c.observe_execution(i, dict(event='launch_not_dispatched', proof='local-launcher/no-process-created', reason='fixture-before-launch'))
+    c.observe_execution(i, dict(event='cleaned'))
+
+
+def assert_released(c, i):
+    assert c.lease(i)['state'] == 'lease_released'
+    row = c.db.execute('SELECT * FROM executions WHERE id=?', (i['attempt_id'],)).fetchone()
+    assert row['cleaned'] == 1 and row['resource'] is None
+
+
+def test_T01_acquired_before_worker_failure(rig2):
+    c, p, s, g, image = rig2; j = create(c); image.unlink()
+    assert c.db.execute('SELECT count(*) FROM executions').fetchone()[0] == 0
+    with pytest.raises(FileNotFoundError): run(rig2, j)
+    i = c.identity(j['job_id']); assert_released(c, i)
+    row = c.db.execute('SELECT * FROM executions').fetchone()
+    assert not row['worker_exited'] and not row['backend_terminal_confirmed']
+    assert c.lease(i)['reason'] == 'FileNotFoundError' and p.calls == 0
+    assert c.get(j['job_id'])['status'] == 'failed'; c.release(j['job_id'])
+    # The previously global poisoned slot can now serve another actual chain.
+    image.write_bytes(b'fixture'); other = create(c, 'book01_p04')
+    assert run(rig2, other)['status'] == 'done'
+
+
+def test_T02_worker_factory_construction_failure(rig2):
+    c, p, s, g, image = rig2; j = create(c)
+    r = Generation(j['job_id'], j['page_id'], j['generation_id'], j['revision'], j['epoch'])
+    f = RuntimeFences(c, 'ocr'); import threading
+    f.pages[r.page_id] = r; f.serial[r.page_id] = threading.Lock()
+    events = []
+    def audit(e):
+        events.append(e); c.observe_execution(asdict(r.identity), e)
+    s.audit = audit
+    def factory(_): raise ValueError('worker construction failed')
+    with pytest.raises(ValueError, match='construction'): s.run(r, f, 'ocr', factory, image)
+    assert_released(c, asdict(r.identity)); assert not any(e['event'] == 'started' for e in events)
+    assert c.lease(asdict(r.identity))['reason'] == 'ValueError' and p.calls == 0
+
+
+def test_T03_actual_subprocess_creation_failure(rig2):
+    c, p, s, g, image = rig2; j = create(c)
+    bad = replace(spec(), argv=(str(image.parent/'missing-python.exe'),))
+    with pytest.raises(Exception, match='FileNotFoundError'): run(rig2, j, worker=bad)
+    assert_released(c, c.identity(j['job_id'])); assert p.calls == 0
+    assert c.get(j['job_id'])['status'] == 'failed'
+
+
+def test_T04_before_backend_submit_failure(rig2):
+    c, p, *_ = rig2; j = create(c)
+    def fault(w):
+        if w == 'intent_before_dispatch': raise RuntimeError('pre-dispatch fixture')
+    with pytest.raises(RuntimeError, match='pre-dispatch'): run(rig2, j, fault=fault)
+    row = c.db.execute('SELECT * FROM submissions').fetchone()
+    assert row['state'] == 'not_submitted' and row['resource'] is None
+    assert not row['backend_terminal_confirmed'] and p.calls == 0
+    assert not c.unresolved(j['job_id']); c.release(j['job_id'])
+
+
+def test_T05_after_submit_client_exception(rig2):
+    c, p, *_ = rig2; j = create(c)
+    def fault(w):
+        if w == 'provider_after_submit_before_record': raise RuntimeError('client response lost')
+    with pytest.raises(ValueError, match='submit_unknown'): run(rig2, j, fault=fault)
+    row = c.db.execute('SELECT * FROM submissions').fetchone()
+    assert row['state'] == 'unknown' and row['resource'] and not row['backend_terminal_confirmed']
+    assert p.calls == 1 and c.get(j['job_id'])['status'] == 'running'
+    with pytest.raises(ValueError): c.release(j['job_id'])
+    assert run(rig2, j)['status'] == 'done' and p.calls == 1
+
+
+def test_T06_external_terminal_unconfirmed(rig2):
+    c, *_ = rig2; j = create(c); i = c.identity(j['job_id'])
+    c.register_execution(i, 'ocr', scope='external_mock', resource='fixture-external')
+    c.observe_execution(i, dict(event='worker_starting')); c.observe_execution(i, dict(event='started'))
+    c.observe_execution(i, dict(event='reaped', active=0, member_exit_witness={'fake-client': True}))
+    c.observe_execution(i, dict(event='cleaned')); c.cancel(j['job_id'])
+    assert c.unresolved(j['job_id'])
+    with pytest.raises(ValueError): c.release(j['job_id'])
+    c.confirm_external_mock(i, dict(mode='mock', identity=i, terminal=True))
+    assert_released(c, i); c.release(j['job_id'])
+
+
+def test_T07_start_uncertain_blocks_retry(rig2, monkeypatch):
+    c, p, s, *_ = rig2; j = create(c); calls = []
+    def uncertain(*a, **kw): calls.append(1); raise RuntimeError('unknown launcher outcome')
+    monkeypatch.setattr(s, 'start_local_tree', uncertain)
+    with pytest.raises(RuntimeError, match='unknown'): run(rig2, j)
+    i = c.identity(j['job_id']); assert c.lease(i)['state'] == 'reconciliation_required'
+    assert c.unresolved(j['job_id']) and calls == [1] and p.calls == 0
+    with pytest.raises(ValueError): c.release(j['job_id'])
+    with pytest.raises(ValueError): create(c, force=True)
+
+
+def test_T08_duplicate_release_idempotent(rig2):
+    c, *_ = rig2; j = create(c); i = acquire(c, j); no_dispatch(c, i)
+    before = dict(c.db.execute('SELECT * FROM executions').fetchone())
+    no_dispatch(c, i); assert_released(c, i)
+    assert dict(c.db.execute('SELECT * FROM executions').fetchone()) == before
+    c.cancel(j['job_id']); c.release(j['job_id']); c.release(j['job_id'])
+    assert c.db.execute("SELECT count(*) FROM ledger WHERE kind='release'").fetchone()[0] == 1
+
+
+def test_T09_concurrent_jobs_lease_isolation(rig2):
+    c, *_ = rig2; jobs = [create(c), create(c, 'book01_p04')]
+    def attempt(j):
+        try: return acquire(c, j)
+        except sqlite3.IntegrityError: return None
+    with ThreadPoolExecutor(2) as pool: ids = list(pool.map(attempt, jobs))
+    assert sum(i is not None for i in ids) == 1
+    winner = next(i for i in ids if i); loser = jobs[ids.index(None)]
+    forged = deepcopy(winner); forged['job_id'] = loser['job_id']
+    with pytest.raises(ValueError): no_dispatch(c, forged)
+    assert c.lease(winner)['state'] == 'lease_acquired'
+    no_dispatch(c, winner); next_i = acquire(c, loser); assert c.lease(next_i)['state'] == 'lease_acquired'
+
+
+def test_T10_process_death_recovery_reconciliation(tmp_path):
+    db = tmp_path/'death.sqlite'
+    code = '''import os,sys
+from orchestrator.services.mock_core_round2.lease_core import Core
+c=Core(sys.argv[1],clock=lambda:1000);c.configure_budget('local','CNY',100)
+j=c.create('local','book01_p03',deadline_ms=100000);i=c.identity(j['job_id'])
+c.register_execution(i,'ocr');c.observe_execution(i,dict(event='worker_starting'))
+os._exit(23)
+'''
+    result = subprocess.run([sys.executable, '-B', '-c', code, str(db)], capture_output=True)
+    assert result.returncode == 23, result.stderr
+    c = Core(db, clock=lambda: 1000)
+    try:
+        row = c.db.execute('SELECT * FROM executions').fetchone()
+        import json
+        i = json.loads(row['identity']); assert c.lease(i)['state'] == 'reconciliation_required'
+        assert row['resource'] and c.unresolved(i['job_id'])
+        with pytest.raises(ValueError): no_dispatch(c, i)
+        # Trusted local process witness reconciles the original execution only.
+        c.observe_execution(i, dict(event='reaped', active=0, member_exit_witness={'fixture-witness': True}))
+        c.observe_execution(i, dict(event='cleaned')); assert_released(c, i)
+        assert c.get(i['job_id'])['epoch'] == 2
+    finally: c.close()
+
+
+def test_T11_old_generation_late_release(rig2):
+    c, *_ = rig2; j = create(c); old = acquire(c, j); no_dispatch(c, old)
+    new = create(c, force=True); current = acquire(c, new)
+    before = dict(c.db.execute('SELECT * FROM executions WHERE id=?', (current['attempt_id'],)).fetchone())
+    no_dispatch(c, old)
+    assert dict(c.db.execute('SELECT * FROM executions WHERE id=?', (current['attempt_id'],)).fetchone()) == before
+    assert c.unresolved(new['job_id'])
+
+
+def test_T12_new_generation_owner_token_protection(rig2):
+    c, *_ = rig2; j = create(c); i = acquire(c, j)
+    for field in ['job_id', 'generation_id', 'attempt_id', 'fencing_token', 'epoch', 'page_id', 'input_revision']:
+        wrong = deepcopy(i); wrong[field] = 999 if isinstance(wrong[field], int) else 'foreign'
+        with pytest.raises(ValueError): no_dispatch(c, wrong)
+    assert c.lease(i)['state'] == 'lease_acquired' and c.unresolved(j['job_id'])
+    assert c.db.execute('SELECT resource FROM executions').fetchone()[0] == 'vision-fixture'
+
+
+def test_persisted_no_dispatch_survives_cleanup_window(rig2):
+    c, *_ = rig2; j = create(c); i = acquire(c, j)
+    c.observe_execution(i, dict(event='launch_not_dispatched', proof='local-launcher/no-process-created', reason='before-cleanup'))
+    c.close(); c.__init__(c.path, clock=lambda: 1000)
+    assert c.unresolved(j['job_id']); c.observe_execution(i, dict(event='cleaned')); assert_released(c, i)
+
+
+def test_no_dispatch_is_a_terminal_launch_decision(rig2):
+    c, *_ = rig2; j = create(c); i = acquire(c, j)
+    c.observe_execution(i, dict(event='launch_not_dispatched', proof='local-launcher/no-process-created', reason='factory-failed'))
+    for event in [dict(event='worker_starting'), dict(event='started'),
+                  dict(event='reaped', active=0, member_exit_witness={'contradiction': True})]:
+        with pytest.raises(ValueError): c.observe_execution(i, event)
+    assert c.lease(i)['state'] == 'launch_not_dispatched'
+    c.observe_execution(i, dict(event='cleaned')); assert_released(c, i)
+
+
+def test_unknown_submission_never_blindly_resubmits(rig2):
+    c, p, *_ = rig2; j = create(c)
+    class Crash(BaseException): pass
+    with pytest.raises(Crash):
+        run(rig2, j, fault=lambda w: (_ for _ in ()).throw(Crash()) if w == 'provider_after_submit_before_record' else None)
+    p.supports_lookup = False  # Even an idempotency claim does not authorize blind replay.
+    with pytest.raises(ValueError, match='submit_unknown'): run(rig2, j)
+    assert p.calls == 1 and c.unresolved(j['job_id'])
+
+
+@pytest.mark.parametrize('window', ['provider_after_submit_before_record', 'files_before_db', 'db_after_publish'])
+def test_lease_pair_actual_process_death(tmp_path, window):
+    code = '''import os,sys
+from pathlib import Path
+sys.path.insert(0,str(Path('orchestrator/tests').resolve()))
+from test_m1_vision_supervisor import spec
+from orchestrator.services.mock_core_round2.lease_core import Core
+from orchestrator.services.mock_core_round2.lease_supervisor import Supervisor
+from orchestrator.services.mock_core_round2.lease_runner import run_mock
+from orchestrator.services.mock_core_round2.provider import FakeProvider
+from orchestrator.services.vision_supervisor.gate import Gate
+p=Path(sys.argv[1]);c=Core(p/'death.sqlite',clock=lambda:1000);c.configure_budget('local','CNY',100)
+j=c.create('local','book01_p03',deadline_ms=100000);image=p/'image.png';image.write_bytes(b'fixture')
+provider=FakeProvider(p/'provider.sqlite')
+def fault(w):
+ if w==sys.argv[2]:os._exit(24)
+run_mock(c,j['job_id'],Supervisor(p/'work',deadline=5),Gate({'local-fixture'}),image,(96,128),spec(),provider,fault=fault)
+'''
+    result = subprocess.run([sys.executable, '-B', '-c', code, str(tmp_path), window], capture_output=True)
+    assert result.returncode == 24, result.stderr
+    c = Core(tmp_path/'death.sqlite', clock=lambda: 1000); p = FakeProvider(tmp_path/'provider.sqlite')
+    s = Supervisor(tmp_path/'recovery-work', deadline=5)
+    try:
+        jid = c.db.execute('SELECT id FROM jobs').fetchone()[0]
+        original_key = c.db.execute('SELECT idem FROM submissions').fetchone()[0]
+        out = run_mock(c, jid, s, Gate({'local-fixture'}), tmp_path/'image.png', (96,128), spec(), p)
+        assert out['status'] == 'done' and p.calls == 0
+        assert c.db.execute('SELECT idem FROM submissions').fetchone()[0] == original_key
+        assert p.db.execute('SELECT count(*) FROM fake_tasks').fetchone()[0] == 1
+        assert all(r[0] == 'lease_released' for r in c.db.execute('SELECT state FROM lease001'))
+    finally: s.close(); c.close(); p.close()
+
+
+def test_receipt_and_resource_release_rollback_together(rig2):
+    c, *_ = rig2; j = create(c); i = acquire(c, j)
+    c.observe_execution(i, dict(event='launch_not_dispatched', proof='local-launcher/no-process-created', reason='test-rollback'))
+    c.db.execute("CREATE TRIGGER deny_release BEFORE UPDATE OF state ON lease001 WHEN NEW.state='lease_released' BEGIN SELECT RAISE(ABORT,'injected commit failure'); END")
+    with pytest.raises(sqlite3.IntegrityError): c.observe_execution(i, dict(event='cleaned'))
+    row = c.db.execute('SELECT * FROM executions').fetchone()
+    assert row['resource'] == 'vision-fixture' and not row['cleaned'] and not row['cleanup_observed']
+    assert c.lease(i)['state'] == 'launch_not_dispatched'
+
+
+def test_foreign_external_receipt_cannot_release(rig2):
+    c, *_ = rig2; j = create(c); i = c.identity(j['job_id'])
+    c.register_execution(i, 'ocr', scope='external_mock', resource='external-fixture')
+    wrong = deepcopy(i); wrong['fencing_token'] = 'foreign'
+    with pytest.raises(ValueError): c.confirm_external_mock(wrong, dict(mode='mock', identity=wrong, terminal=True))
+    assert c.lease(i)['state'] == 'lease_acquired' and c.unresolved(j['job_id'])

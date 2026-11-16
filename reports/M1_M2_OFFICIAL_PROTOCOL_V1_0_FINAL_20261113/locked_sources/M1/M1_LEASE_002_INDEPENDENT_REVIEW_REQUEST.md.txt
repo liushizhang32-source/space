@@ -1,0 +1,233 @@
+# M1-LEASE-002 独立复审申请
+
+日期：2026-11-12（Asia/Hong_Kong）。工作区：`C:/Users/16173/Documents/ChatGPT/人工智能+/space-m1-m2-v12-supervisor`。
+
+**not_submitted 重投资源租约缺陷已完成候选 Mock 本地修复及离线自测，申请独立复审。此报告不是独立复审通过裁决，不批准 M1/M4 联调，不批准生产接线。**
+
+依据为本地实际读取的 `M1_ROUND2_LEASE_001_INDEPENDENT_REVIEW.md`，尤其 P2 LEASE-IR-01；同时读取 LEASE-001 源码/报告/全部专项测试及原46项整改测试。原三个 P1 不推翻、不降低断言，候选 Mock 反例回归继续通过。
+
+## 1. 执行前保护与授权范围
+
+实际分支 `integration/m1-m2-v12-supervisor`，HEAD `0dc2844f910d0e37ae3ef0253d7838dea1f61bfb`。开始时 tracked/staged diff 均为空，但完整porcelain有2635条，工作区并不clean。九个checkout的branch/HEAD/完整status/二进制diff和全部非.git既有文件SHA256已保存于 `docs/m1-round2/lease-002-evidence/baseline.json`。M1包括6669个既有文件，包含既有未跟踪实现、历史日志、缓存及独立报告。
+
+仅修改授权的M1候选 `orchestrator/services/mock_core_round2/lease_core.py`；完整原字节另存 `lease-002-evidence/lease_core.before.py.txt`，可用candidate.diff审查。本轮没有修改原round2/core.py、runner.py、旧mock_core_v01、原LEASE-001测试、原46项整改测试、安全Gate、公共Schema、冻结API、M2/M3/M4源码或既有报告。原历史manifest仍保持原字节，最新候选哈希另见final-source-manifest.json，不把旧manifest冒充新源码快照。
+
+仅新增本轮测试、复审申请报告、必要证据和测试输出；没有清理旧目录，没有reset/clean/stage/commit/push/PR/merge，没有安装依赖、真实模型或供应商调用。所有故障注入使用本地SQLite和精确类型FakeProvider。
+
+## 2. 根因与修改文件
+
+原LEASE-001在提交前普通异常时，将submissions行置not_submitted并清resource；重投调用父类逻辑时，因该job已有行而跳过INSERT，后续仅改state=submitting，未重取资源。提交后异常使其成为unknown，但resource仍NULL，另一job可同时取得共享资源。原per-job submit锁只能防同job重复，不能代替跨job共享租约。
+
+本轮在候选Core内部替换提交分支，不改父类旧实现。新增私有 `lease002_submissions` 提交租约历史表：lease_id主键、job、完整owner JSON、原idem key、state、活动resource、reason。owner包含job/page/generation/input_revision/epoch/attempt/fencing token。每次从not_submitted重投产生新lease_id；活跃resource UNIQUE和活跃job部分唯一索引避免跨job争抢及单job多占用，submissions.resource原有UNIQUE也继续生效。
+
+|文件/当前行|变更|
+|---|---|
+|orchestrator/services/mock_core_round2/lease_core.py:17|增加候选提交租约表/索引；初始化完成前核对未结束提交与租约双向一致；不一致关闭连接/owner锁并拒绝运行|
+|同文件:150|恢复submitting为unknown，保留资源和历史owner；不因调度器退出推断后端终止|
+|同文件:165|校验活动提交的资源、owner、key、state与租约对应，拒绝缺失或不一致的旧库状态|
+|同文件:180|按精确lease_id和完整identity查询历史租约|
+|同文件:188|严格fake终止回执验证；精确owner/key/资源比较，提交记录和租约一起终止/释放|
+|同文件:210|显式受信任本地reconcile_submission，只有原key lookup，无重新submit；迟到历史终态重放不改新租约|
+|同文件:227|新提交/重投资源、owner、intent同一事务；资源冲突回滚并另记失败审计，禁止dispatch|
+|同文件:266|提交屏障前重新live检查；屏障提交后才调用fake；未知结果保留租约，禁止盲重投|
+|orchestrator/tests/test_m1_round2_lease002.py|新增12组要求场景及5个补充反例，共20个参数化节点；原测试文件不改|
+|docs/m1-round2/lease-002-evidence/|完整命令、stdout原字节/UTF8副本、XML、汇总、前置指纹、原源码备份、diff、网络守卫检查和保全脚本/结果|
+|M1_LEASE_002_INDEPENDENT_REVIEW_REQUEST.md|本复审申请|
+
+现有配对入口不变：lease_core.Core + lease_supervisor.Supervisor + lease_runner.run_mock。没有注册HTTP入口。新增的reconcile_submission也是受信任本地管理接口，不可开放给Worker JSON或供应商自报。
+
+## 3. 新状态转换
+
+|起点/事件|submissions / lease002_submissions结果|资源与提交规则|
+|---|---|---|
+|新提交或not_submitted重投|两个表原子写intent，租约写新lease_id和完整owner|两表同时占用deterministic-mock-provider；只有commit后才能继续|
+|获取失败/唯一约束竞争|原not_submitted不变；失败插入整体回滚|provider零调用；不进入unknown；events记lease002_acquire_blocked_resource_busy，明确no dispatch错误|
+|其他完整性获取失败|原状态不变、回滚并审计integrity_failure|错误分类submission_lease_acquisition_failed，不假报资源占用|
+|intent阶段普通异常|两表置not_submitted并清resource，保留历史owner/原因|提交屏障未越过，证明未请求；不填backend_terminal_confirmed|
+|intent阶段硬崩溃|已提交的intent和资源仍在|恢复检查双表一致；屏障从未越过，可在当前live授权下继续原意图；保留原owner，不把历史重标成当前epoch|
+|提交屏障|两表同事务置submitting|再次核对当前授权及原租约；commit后才provider.submit|
+|请求/回执不确定|两表unknown，reason与审计持久化|本次lease_id、owner、key、resource不变；release/force拒绝；不能因客户端退出释放|
+|屏障后进程死亡|重启submitting转unknown|即使fake查不到记录，也不能盲重投或按超时释放|
+|unknown对账|原key lookup；无可信回执则继续unknown|即使声明支持幂等也不再次provider.submit|
+|明确fake终止|两表confirmed、资源均NULL，保存task_ref/终止位|回执和释放同一事务；不代表真实供应商终止|
+|旧lease_id/旧owner回执或重复释放|非匹配owner拒绝；历史not_submitted/confirmed只幂等返回|不按resource名字批量更新，不改变新generation或新attempt的资源|
+
+失败获取保留安全阻塞状态和明确审计；直接Core.submit下Job仍可等待，其submission保持not_submitted。沿用runner的普通错误处理可能使Job失败，但不会发请求或错误进入unknown，不新增自动生产调度策略。
+
+## 4. 原子性、并发和崩溃恢复
+
+RLock、SQLite BEGIN IMMEDIATE、synchronous FULL、OS单owner锁继续沿用。原per-job提交锁保留。资源重新获取、owner登记、提交意图在一个事务内；若submissions更新失败，先插入的新租约也回滚。submitting屏障两表同事务，任一更新失败都不调用provider。fake终止记录和两表释放也同事务，终止更新失败时保留有效占用，转unknown待查。
+
+新增子进程实际os._exit(29)覆盖重投的4个边界：获取/intent提交后、submitting屏障后请求前、fake已接收但本地登记前、confirmed登记后返回前。分别核对持久化状态、完整历史owner、资源和fake台账任务数；恢复当前epoch提升，但不伪造原租约owner。获取/intent后恢复只提交一次；屏障后请求前无lookup记录则停止且零调用；fake已接收窗口通过原key对账，重启provider新实例calls=0；登记后重复调用仍calls=0。
+
+恢复步骤沿用父类先将submissions.submitting置unknown，再将租约submitting置unknown；它们不构成同一个恢复事务。此期间OS owner锁保持，构造器未返回、禁止对外dispatch；若在中间再次死亡，下次重开幂等完成，两表不一致会被启动校验拒绝，不会在失配时执行请求。这里没有宣称生产多实例恢复事务。
+
+新表只属于候选SQLite库。本轮仅创建/重开新测试库，没有打开或改写原历史测试数据库。既有LEASE-001库若有缺台账的未结束提交，初始化拒绝，不能从历史空resource重建“已占用”假象；旧not_submitted可在新调用时实际重取。没有实现生产数据库迁移或人工修复工具。
+
+## 5. 专项测试结果
+
+最终完整回归XML中，新增模块20/20通过。用户要求的T01—T12为12组、15个节点（T06有4个窗口），再加5个独立反例，共20；不是把原LEASE-001的20项改名计数。每项均有状态、租约及调用次数断言，公共helper也包含断言。
+
+|要求|实际覆盖与关键断言|结果|
+|---|---|---|
+|T01重取成功|provider执行前看到submitting、两表有效同资源、owner完整、新lease_id不同于旧；最终confirmed、calls1|通过|
+|T02资源占用拒绝|其他job持有unknown租约；重投仍not_submitted/无租约、busy审计，赢家原行不变、calls1|通过|
+|T03获取失败禁提交|其他job在intent持租约；provider.submit替换为pytest.fail；本job阻塞、not_submitted、calls0|通过|
+|T04重投unknown|新lease_id与原owner绑定，unknown且两表占用，终止位0，calls1|通过|
+|T05unknown持续有效|重复submit不重投、release/force拒绝；lease逐字段不变，calls1|通过|
+|T06请求前后进程崩溃|4个实际死亡窗口，持久化owner/资源/状态、fake_tasks数量与恢复调用数分别断言|4/4通过|
+|T07重启核对|当前epoch2，原owner epoch1仍精确绑定；无lookup时保持unknown和资源、calls1|通过|
+|T08并发争抢|两线程同时重投不同job：一个unknown一个busy；唯一活跃资源，败者not_submitted，calls1|通过|
+|T09旧generation|force新generation后，旧lease重放和旧owner均不能释放新unknown租约，calls1|通过|
+|T10旧attempt/token|新真实control attempt后重投；七个身份字段分别伪造都拒绝，旧lease重放不改新行，calls1|通过|
+|T11重复重投|6线程同job提交，返回同ref，只有一个终止租约，calls1|通过|
+|T12终止后释放|未确认前release拒绝；精确fake lookup后两表释放；旧终态重放不改另job租约，calls总数2|通过|
+|补充1：获取事务回滚|触发器阻止重取更新；新owner行也回滚，原not_submitted、resource NULL、calls0|通过|
+|补充2：终止释放回滚|触发器阻止confirmed；两表unknown持资源、终止位0；恢复lookup释放、calls1|通过|
+|补充3：提交屏障回滚|触发器阻止submitting租约更新；提交记录也回滚，安全not_submitted、calls0|通过|
+|补充4：无效终止回执|terminal=False的lookup被拒绝，unknown持资源不变，calls1|通过|
+|补充5：重启缺租约|主动破坏台账后重开拒绝；原unknown记录及占用保留，不再submit，fake台账1|通过|
+
+以下为最终XML的新增节点精确身份及测试定义行号：
+
+|节点|源码行|结果|
+|---|---:|---|
+|`test_T01_retry_reacquires_before_dispatch`|76|passed|
+|`test_T02_occupied_resource_refuses_retry`|91|passed|
+|`test_T03_failed_acquisition_never_calls_provider`|97|passed|
+|`test_T04_retry_unknown_preserves_new_owner`|106|passed|
+|`test_T05_unknown_lease_blocks_release_force_and_resubmit`|112|passed|
+|`test_T06_process_crash_across_retry_boundaries[lease002_after_acquire]`|123|passed|
+|`test_T06_process_crash_across_retry_boundaries[lease002_before_request]`|123|passed|
+|`test_T06_process_crash_across_retry_boundaries[provider_after_submit_before_record]`|123|passed|
+|`test_T06_process_crash_across_retry_boundaries[recorded_before_return]`|123|passed|
+|`test_T07_reopen_rechecks_original_durable_owner`|163|passed|
+|`test_T08_concurrent_retries_one_shared_resource`|173|passed|
+|`test_T09_old_generation_cannot_release_new_lease`|189|passed|
+|`test_T10_old_attempt_and_token_cannot_release_new_lease`|200|passed|
+|`test_T11_duplicate_retries_never_duplicate_backend_submission`|215|passed|
+|`test_T12_terminal_confirmation_releases_exact_lease`|223|passed|
+|`test_acquisition_owner_and_intent_rollback_together`|236|passed|
+|`test_terminal_release_rollback_retains_resource`|245|passed|
+|`test_dispatch_barrier_rollback_proves_no_request`|255|passed|
+|`test_invalid_terminal_lookup_cannot_release`|264|passed|
+|`test_restart_refuses_missing_durable_unknown_lease`|271|passed|
+
+## 6. 原三个P1及原测试回归
+
+`test_m1_round2_lease001.py`保持原字节，66节点全部通过，其中20项原租约场景、46项原整改函数复验。`test_m1_round2_remediation.py`保持原字节，原模块46项全部通过；将preserved前缀还原后，与原46节点身份逐项相同。全部断言未降低。最终XML、final-test-summary.json保留逐项身份。
+
+|原P1|本轮关键反例|
+|---|---|
+|取消后禁止重试|OCR/VLM/backoff取消、线程重复取消，启动次数、provider0、无资产，未终止前release/force拒绝|
+|迟到generation fencing|4类业务事件×5字段共20项；恢复后旧失败/超时/取消/阶段及旧发布拒绝；并发乱序仅一次迁移|
+|恢复submit幂等|六个提交/发布崩溃窗口、无lookup/幂等unknown占用、6线程同job重复submit、持久fake任务/key复用；新候选unknown仅lookup不重投|
+
+复验函数仍使用原模块globals，常用rig已由原LEASE-001测试文件切换新Core/Supervisor；原46中的3个嵌入实际进程死亡测试硬编码旧入口，仍只算旧入口证据。LEASE-001自身已有3个新配对死亡节点，本轮保留并通过；LEASE-002另有4个重投死亡窗口。没有把旧入口子进程结果冒充新实现验证。
+
+## 7. 完整回归、命令和日志
+
+最终主回归994个唯一节点：960 passed、0 failed/error、34 skipped，stdout耗时134.42秒。独立配置组1 passed，与主组(classname,name)交集为0。**最终合计995个唯一测试节点：961 passed、0 failed/error、34 skipped；另20项媒体集成未执行。**原941通过加本轮新增20通过为961；中间轮次均不累计。节点身份去重不表示961种不同业务能力，保留测试有意重复相同反例。
+
+运行cwd为本checkout，使用已有解释器；准确argv、环境和版本在对应*-command.json。
+
+```powershell
+& ../member2-v111-integration-20261110/venv/Scripts/python.exe -B docs/m1-round2/lease-002-evidence/run_checks.py regression-final-v2
+& ../member2-v111-integration-20261110/venv/Scripts/python.exe -B docs/m1-round2/lease-002-evidence/run_checks.py member3-config-only
+```
+
+主命令展开为 `python -B -m pytest -p no:cacheprovider -c orchestrator/tests/pytest.ini orchestrator/tests --ignore=orchestrator/tests/test_member3_integration.py tests --basetemp=<evidence>/tmp-regression-final-v2 --junitxml=<evidence>/regression-final-v2.xml -ra`；配置组只选test_unknown_backend_rejected，独立basetemp/XML。环境清除LLM_/VISION_/TTS_、禁pyc/pytest缓存、关闭外部pytest插件自动载入。根tests自定义tmp_path仍向随机新_test_tmp目录输出，未清理既有内容。
+
+Windows10 build19045；Python3.12.14、SQLite3.53.1、pytest9.2.0、pydantic2.14.1、fastapi0.162.0、Pillow13.0.0、httpx0.28.1、anyio4.11.0、pluggy1.7.0；jsonschema未安装。未安装FFmpeg或其他依赖。
+
+网络守卫经PYTHONPATH/sitecustomize进入pytest及继承环境的Python子进程，禁止普通socket连接、connect_ex、create_connection和DNS查询。仅标准库socketpair创建过程中、当前线程的内部回环连接允许，用于Windows asyncio自唤醒通信，不连接真实服务；普通127.0.0.1连接也被拒。offline-guard-check-v2.json实际检验asyncio可用、普通回环/外部连接/DNS均被拦截。Supervisor采用清空环境和受审核本地fixture命令，工作进程不继承PYTHONPATH；已读取fixture源码，只运行标准库合成结果/睡眠子进程，不运行模型。该守卫不是生产网络沙箱声明。
+
+|证据（均在docs/m1-round2/lease-002-evidence/）|结果/用途|
+|---|---|
+|targeted-command.json / targeted.log/xml/summary.json|初轮129 passed：当时新增17+原LEASE-001 66+原46|
+|targeted-final-command.json / targeted-final.log/xml/summary.json|第二轮131 passed：当时新增19+66+46；之后增加启动一致性反例，最终20已在最终完整回归通过|
+|regression-final-command.json / regression-final.log/xml/summary.json|首次完整回归915 passed、3 failed、42 errors、34 skipped；失败证据完整保留|
+|regression-first-failure-analysis.json|45个failure/error文本均包含断网守卫标记；Windows asyncio内部socketpair被首版守卫误拦，未修改业务测试或放宽源码安全Gate|
+|regression-final-v2-command.json / regression-final-v2.log/xml/summary.json|仅修正测试守卫的内部IPC例外后，最终源码完整重跑960/0/34|
+|member3-config-only-command.json / member3-config-only.log/xml/summary.json|配置1 passed，未调用媒体client|
+|*.utf8.log|stdout原字节Windows本地编码的UTF8转码副本，原log未覆盖|
+|final-test-summary.json|最终两组去重汇总、34项skip具体原因、20/66/46节点完整名单|
+|final-source-manifest.json / candidate.diff|最终源码/测试/运行脚本/守卫哈希及源码位置、授权Core与原字节差异|
+
+34项跳过均为原有原因：2项正式Sidecar/真实HTTP停止能力阻塞；32项FFmpeg/ffprobe缺失（pipeline5、story13、tts9、video5）。具体名单与原文原因如下，全部未计入passed：
+
+|序号|classname::name|跳过原因|
+|---:|---|---|
+|1|`test_m1_vision_supervisor::test_round2_formal_sidecar_protocol_acceptance`|BLOCKED: final Sidecar fields/version/path require M1/M2/M3 and owner sign-off|
+|2|`test_m1_vision_supervisor::test_round2_real_HTTP_backend_stopped`|BLOCKED: no M2 HTTP per-request cancellation adapter/proof; no real model calls authorized|
+|3|`test_pipeline::test_run_page_done`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|4|`test_pipeline::test_run_page_without_video`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|5|`test_pipeline::test_run_page_no_audio_still_renders_video`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|6|`test_pipeline::test_run_page_video_failure_degrades_not_fails`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|7|`test_pipeline::test_run_page_failed_when_no_input`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|8|`test_story::test_story_ok_path`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|9|`test_story::test_narration_never_exceeds_tts_limit`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|10|`test_story::test_ocr_failed_but_vlm_ok_degrades_to_no_ocr`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|11|`test_story::test_vlm_failed_but_ocr_ok_degrades_to_no_scene`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|12|`test_story::test_wordless_page_is_not_a_failure`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|13|`test_story::test_both_inputs_missing_raises_3001`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|14|`test_story::test_highlight_ids_only_reference_existing_objects`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|15|`test_story::test_tts_failure_falls_back_to_estimate`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|16|`test_story::test_safety_block_raises_3004`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|17|`test_story::test_invalid_age_level_returns_1002`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|18|`test_story::test_vlm_safety_false_blocks_page`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|19|`test_story::test_llm_unreachable_fails_without_writing_story`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|20|`test_story::test_llm_failure_can_fall_back_to_template`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|21|`test_tts::test_silent_engine_writes_file_and_measures`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|22|`test_tts::test_second_call_hits_content_hash_cache`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|23|`test_tts::test_different_speed_produces_different_file`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|24|`test_tts::test_engine_failure_maps_to_3008`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|25|`test_tts::test_api_success_envelope`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|26|`test_tts::test_api_missing_text_envelope`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|27|`test_tts::test_api_overlong_text_envelope`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|28|`test_tts::test_api_engine_failure_envelope`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|29|`test_tts::test_router_is_mounted_under_v1`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|30|`test_video::test_compose_video_end_to_end`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|31|`test_video::test_silent_video_when_tts_failed`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|32|`test_video::test_missing_source_image_raises`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|33|`test_video::test_retry_once_then_fail`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|34|`test_video::test_video_json_not_written_on_failure`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+
+`test_member3_integration.py`原21节点，仅独立配置1项执行；媒体client仍依赖FFMPEG_PATH/FFPROBE_PATH，其他20项未执行，不混入34 skipped或961 passed。没有把未运行测试算通过。
+
+## 8. 文件与Git保护核对
+
+已执行逐文件SHA256与分支/HEAD/status/staged/unstaged核对；preservation-ready.json为完整回归结束后的核对，preservation-final.json为报告生成后的最终核对。验证脚本只允许候选lease_core.py这一项既有文件变化；其他既有文件零修改/删除。M1新增白名单仅本轮测试、报告、lease-002-evidence及随机新_test_tmp输出；其他八个checkout不允许任何新增或变更。此范围均在当前任务授权的候选实现、必要测试、日志和交付报告内。
+
+|checkout（相对于共同父目录）|既有文件数|既有文件变化|branch/HEAD/staged/unstaged|完整Git状态|
+|---|---:|---|---|---|
+|ci-bootstrap-20261109/target-member3|183|无|保持原值|与基线完全相同|
+|ci-post-member3-20261110/target-dev|203|无|保持原值|与基线完全相同|
+|member2-v111-integration-20261110/dev|205|无|保持原值|与基线完全相同|
+|member2-v111-integration-r2-20261110/dev|205|无|保持原值|与基线完全相同|
+|space|52|无|保持原值|与基线完全相同|
+|space-ci-bootstrap|29|无|保持原值|与基线完全相同|
+|space-m1-m2-v12-supervisor|6669|仅授权lease_core.py|保持原值|原条目全部保留；仅增加本轮新文件|
+|space-member2-v111-integration|332|无|保持原值|与基线完全相同|
+|space-member3-v116-integration|183|无|保持原值|与基线完全相同|
+
+M1源码本来是未跟踪候选文件，故git diff为空不能证明未改；本次用baseline文件哈希识别授权修改。其他checkout原有tracked差异（space、space-member2-v111-integration）完整保留，未重置。Git原始状态本来不clean；新增报告/测试/证据必然增加未跟踪条目，不能声称最终status逐字节不变。核对只证明本地执行前基线至完成的变化，不证明远端状态或未存档历史。
+
+## 9. 剩余风险与停止点
+
+1. 本轮是确定性FakeProvider与单owner候选SQLite的本地修复；没有证明真实后端收到/停止、供应商取消、退款/账单或exactly-once。fake terminal回执不可当真实终止证明。
+2. 提交屏障后但请求前死亡也保守unknown，若无可信台账就保持占用。本轮没有生产负证明adapter、自动对账/重调度服务或无限期占用运维策略；不能引入无条件finally或定时清租约。
+3. 新增表和校验不构成生产迁移、备份/灾备、磁盘故障、GC、多进程/跨主机并发或跨平台验收；线程争抢在同Core/RLock内，实际死亡子进程验证单owner重开，不冒充多调度器竞争。
+4. 旧round2入口的启动前缺陷仍在历史实现；必须显式选择候选配对，不能误用旧入口。现有LEASE-001待处理库缺新台账时拒绝运行，必须另行安排恢复/迁移复审。
+5. Sidecar/Capture revision、0.2-draft跨成员协议、正式签认、32项媒体跳过/20项媒体集成未执行、M1/M4接线、真实数据授权与M5独评继续未验证；预算币种/结算/跨日与真实账单问题未在本轮解决。
+
+|裁决边界|状态|
+|---|---|
+|LEASE-IR-01 / M1-LEASE-002|候选Mock本地修复与自测通过，提交独立复审申请，等待负责人裁决|
+|原三个P1|原关键反例保持通过；候选Mock限定成果保留|
+|真实后端终止验证|未执行、未验证|
+|生产环境资源管理验证|未执行、未验证|
+|M1/M4 Mock联调|未批准|
+|生产接线|禁止|
+
+本轮到此停止，不自动进入下一阶段。报告生成后再执行最终保全核对，最终执行结果同时在回复中报告；不改写任何既有整改/独立审查报告。

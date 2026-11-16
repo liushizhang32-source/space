@@ -1,0 +1,265 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:m1-m2:offline:1.0:request",
+  "$comment": "M1_M2_OFFLINE_PROTOCOL_V1.0 FROZEN OWNER_APPROVED; context requirements are normative in FIELD_CONTRACT and protocol documents.",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "protocol": {
+          "const": "m1-vision-worker/0.1"
+        },
+        "job_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "page_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "generation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "input_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "epoch": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "attempt_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fencing_token": {
+          "type": "string",
+          "minLength": 1
+        },
+        "stage": {
+          "const": "ocr"
+        },
+        "image_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "image_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "result_path": {
+          "const": "result.json"
+        },
+        "outputs": {
+          "type": "object",
+          "properties": {
+            "c1": {
+              "type": "string",
+              "minLength": 1
+            },
+            "c2": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sidecar": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "c1",
+            "c2",
+            "sidecar"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "protocol",
+        "job_id",
+        "page_id",
+        "generation_id",
+        "input_revision",
+        "epoch",
+        "attempt_id",
+        "fencing_token",
+        "stage",
+        "image_path",
+        "image_sha256",
+        "result_path",
+        "outputs"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "protocol": {
+          "const": "m1-vision-worker/0.1"
+        },
+        "job_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "page_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "generation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "input_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "epoch": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "attempt_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fencing_token": {
+          "type": "string",
+          "minLength": 1
+        },
+        "stage": {
+          "const": "vlm"
+        },
+        "image_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "image_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "result_path": {
+          "const": "result.json"
+        },
+        "outputs": {
+          "type": "object",
+          "properties": {
+            "c1": {
+              "type": "string",
+              "minLength": 1
+            },
+            "c2": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sidecar": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "c1",
+            "c2",
+            "sidecar"
+          ],
+          "additionalProperties": false
+        },
+        "inputs": {
+          "type": "object",
+          "properties": {
+            "c1": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "c1"
+          ],
+          "additionalProperties": false
+        },
+        "c1_binding": {
+          "type": "object",
+          "properties": {
+            "identity": {
+              "type": "object",
+              "properties": {
+                "job_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "page_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "generation_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "input_revision": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "epoch": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "attempt_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "fencing_token": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "job_id",
+                "page_id",
+                "generation_id",
+                "input_revision",
+                "epoch",
+                "attempt_id",
+                "fencing_token"
+              ],
+              "additionalProperties": false
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "image_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "identity",
+            "sha256",
+            "image_sha256"
+          ],
+          "additionalProperties": false,
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "$id": "urn:m1-m2:offline:1.0:c1-binding",
+          "$comment": "FROZEN/OWNER_APPROVED. Structural schema only; file handle, freshness, hashes and cross-document rules require contextual verification."
+        }
+      },
+      "required": [
+        "protocol",
+        "job_id",
+        "page_id",
+        "generation_id",
+        "input_revision",
+        "epoch",
+        "attempt_id",
+        "fencing_token",
+        "stage",
+        "image_path",
+        "image_sha256",
+        "result_path",
+        "outputs",
+        "inputs",
+        "c1_binding"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}
