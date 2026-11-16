@@ -77,10 +77,14 @@ try:
     check('queued-running-done and all stages',completed)
     def visual():
         for kind,model in [('ocr',OCRData),('vlm',VLMData)]:
-            q=client.get('/json/book01_p03_'+kind+'.json');assert q.status_code==200
-            data=model.model_validate(q.json());assert data.page_id==capture['page_id']
-        return {'ocr':'public Schema passed','vlm':'public Schema passed','source':'fixed MOCK'}
-    check('visual fixtures public Schemas',visual)
+            q=client.get('/json/book01_p03_'+kind+'.json')
+            assert q.status_code==503 and q.json()['status']=='BLOCKED'
+            # Preserve the complete fixture Schema/page checks on server-owned
+            # bytes, while additionally proving HTTP cannot release C1/C2.
+            data=model.model_validate_json((ROOT/'http-data/json'/('book01_p03_'+kind+'.json')).read_bytes())
+            assert data.page_id==capture['page_id']
+        return {'ocr':'Schema passed; HTTP blocked','vlm':'Schema passed; HTTP blocked','source':'fixed MOCK'}
+    check('visual fixture Schemas and internal HTTP denial',visual)
     page=job['pages'][0]
     def story():
         q=client.get(page['story_url']);assert q.status_code==200

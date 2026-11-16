@@ -1,0 +1,145 @@
+"""Gated M1 handoff and atomic private publication, separate from HTTP storage.
+
+No automatic activation: M2 must first implement the single-attempt protocol.
+Existing Mock/Member3 routes, storage and public response structure stay intact.
+"""
+from dataclasses import asdict
+import hashlib
+import json
+import os
+from pathlib import Path, PurePosixPath
+import re
+import shutil
+import uuid
+from types import MappingProxyType
+
+from .supervisor import Cancelled, VisionError, unique_json
+
+
+class AtomicStore:
+    """Readers resolve ONLY the atomic pointer. Bundles are not a StaticFiles root.
+
+    A generation-specific immutable bundle is fully written before one pointer
+    replacement. The fencing lock covers the commit and is shared with cancel /
+    force. This is single-process like Jobs; multi-server durability is NOT claimed.
+    """
+    def __init__(self, private_root, fences):
+        self.root, self.fences = Path(private_root).resolve(), fences
+        (self.root/'bundles').mkdir(parents=True, exist_ok=True)
+        (self.root/'pointers').mkdir(exist_ok=True)
+
+    @staticmethod
+    def safe_page(page_id):
+        if not re.fullmatch(r'[a-z][a-z0-9]{3,11}_p\d{2}', page_id):
+            raise VisionError(1002, 'Invalid page ID')
+
+    def publish(self, record, identity, documents, *, verify, fault=None):
+        self.safe_page(record.page_id)
+        self.fences.check(record, identity)
+        if record.worker_state != 'reaped' or record.c2_sha256 is None:
+            raise VisionError(1002, 'Publish before worker drain / safety gate')
+        if record.backend_execution and record.backend_execution['status'] != 'confirmed':
+            raise VisionError(9001, 'backend_execution_unconfirmed')
+        documents = dict(documents)
+        def valid_name(name):
+            return (isinstance(name,str) and bool(name) and '\\' not in name and ':' not in name
+                    and not PurePosixPath(name).is_absolute()
+                    and all(p not in {'.','..'} and re.fullmatch(r'[a-zA-Z0-9_.-]+',p)
+                            for p in name.split('/')))
+        if not documents or any(not valid_name(name)
+                                or type(raw) is not bytes or not raw for name, raw in documents.items()):
+            raise VisionError(1002, 'Invalid publication bundle')
+        paths = {kind:f'json/{record.page_id}_{kind}.json' for kind in ('ocr','vlm','refs')}
+        if (not set(paths.values()) <= documents.keys()
+                or hashlib.sha256(documents[paths['vlm']]).hexdigest() != record.c2_sha256):
+            raise VisionError(1002, 'Publication C2 differs from safety-gated snapshot')
+        # Trusted adapter must validate StoryData and deeply decode media here.
+        # This is mandatory, not a worker-supplied "validated=true" flag.
+        verify(MappingProxyType(documents))
+        name = record.generation_id+'-'+uuid.uuid4().hex
+        bundle = self.root/'bundles'/name
+        pointer = self.root/'pointers'/(record.page_id+'.json')
+        temp_pointer = self.root/'pointers'/('.'+uuid.uuid4().hex+'.tmp')
+        committed = False
+        try:
+            bundle.mkdir()
+            hashes = {}
+            for filename, raw in documents.items():
+                destination = bundle/filename
+                destination.parent.mkdir(parents=True,exist_ok=True)
+                with destination.open('xb') as stream:
+                    stream.write(raw)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                hashes[filename] = hashlib.sha256(raw).hexdigest()
+                if fault:
+                    fault(filename)
+            manifest = dict(identity=asdict(identity), bundle=name,
+                            c2_sha256=record.c2_sha256, sha256=hashes)
+            with temp_pointer.open('x', encoding='utf-8') as stream:
+                json.dump(manifest, stream)
+                stream.flush()
+                os.fsync(stream.fileno())
+            with self.fences.lock:
+                self.fences.check(record, identity)
+                os.replace(temp_pointer, pointer)
+                committed = True
+                record.status = 'done'
+            return manifest
+        finally:
+            temp_pointer.unlink(missing_ok=True)
+            if not committed and bundle.exists():
+                shutil.rmtree(bundle)
+
+    def read(self, page_id):
+        self.safe_page(page_id)
+        with self.fences.lock:
+            pointer = self.root/'pointers'/(page_id+'.json')
+            if not pointer.exists():
+                return None
+            manifest = unique_json(pointer.read_bytes())
+            record = self.fences.pages.get(page_id)
+            # Old generation assets are not effective while a replacement runs,
+            # nor after a block/cancel. Raw bundles have no public URL.
+            if (not record or record.status != 'done' or record.cancel.is_set()
+                    or manifest['identity'] != asdict(record.identity)):
+                return None
+            bundle = self.root/'bundles'/manifest['bundle']
+            contents = {n: (bundle/n).read_bytes() for n in manifest['sha256']}
+            if any(hashlib.sha256(raw).hexdigest() != manifest['sha256'][n] for n, raw in contents.items()):
+                raise VisionError(1002, 'Published bundle integrity failure')
+            return manifest, contents
+
+
+class VisionPipeline:
+    def __init__(self, supervisor, fences, gate, store):
+        self.supervisor, self.fences, self.gate, self.store = supervisor, fences, gate, store
+
+    def run(self, record, image_path, size, spec, *, downstream, verify, fault=None):
+        try:
+            c1 = self.supervisor.run(record, self.fences, 'ocr', spec, image_path)
+            ocr = self.gate.c1(c1, record.page_id, size)
+            if ocr.status == 'failed':
+                raise VisionError(2001, 'OCR returned failed without stage error')
+            # 3001 is only empty OCR: a valid frozen C1(empty) is mandatory.
+            # Never invent a C1 or reinterpret 3001 as content safety.
+            c2 = self.supervisor.run(record, self.fences, 'vlm', spec, image_path, c1=c1)
+            handoff = self.gate.accept(record, self.fences, c1, c2, size)
+            self.fences.check(record, c2.identity)
+            documents = dict(downstream(handoff))
+            self.fences.check(record, c2.identity)
+            documents.update({f'json/{record.page_id}_ocr.json': handoff.c1,
+                              f'json/{record.page_id}_vlm.json': handoff.c2,
+                              f'json/{record.page_id}_refs.json': handoff.sidecar})
+            return self.store.publish(record, c2.identity, documents, verify=verify, fault=fault)
+        except Cancelled:
+            # Never revive or change the replacement generation's record.
+            if record.status not in {'blocked', 'failed'}:
+                record.status = 'cancelled'
+            raise
+        except BaseException as exc:
+            with self.fences.lock:
+                if self.fences.current(record):
+                    record.error_code = exc.code if isinstance(exc, VisionError) else 9001
+                    record.status = 'blocked' if record.error_code == 3004 else 'failed'
+            raise

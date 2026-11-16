@@ -1,0 +1,10 @@
+"""Explicit LEASE-001 entry, preserving the original round2 runner byte-for-byte."""
+from .lease_core import Core
+from .lease_supervisor import Supervisor
+from .runner import run_mock as round2_run
+
+
+def run_mock(core, jid, supervisor, gate, image, size, spec, provider, *, fault=lambda _: None):
+    if type(core) is not Core or type(supervisor) is not Supervisor:
+        raise ValueError('LEASE-001 requires the paired lease Core and Supervisor')
+    return round2_run(core, jid, supervisor, gate, image, size, spec, provider, fault=fault)

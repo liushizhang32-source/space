@@ -1,0 +1,15 @@
+{
+  "fixture_only": true,
+  "adapter_invoked": false,
+  "messages_file": "fixtures/FINAL_MESSAGES.json",
+  "canonical_file": "fixtures/FINAL_MESSAGES_CANONICAL.bin",
+  "prompt_sha256": "4f08d3c39a0022f6a67f88310b36d76dbf8426be6044934874b44aedd916d256",
+  "attachments": [
+    {
+      "message_index": 1,
+      "fixture_file": "fixtures/IMAGE_HASH_FIXTURE.bin",
+      "raw_sha256": "c369baf1451f6e07dc87da1e46af4b368f3e43360c2893c531ae648dadba5984",
+      "kind": "synthetic_binary_hash_fixture_not_decoded_image"
+    }
+  ]
+}

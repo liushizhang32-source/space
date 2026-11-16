@@ -1,0 +1,150 @@
+"""M1-only regression; local processes and fake acknowledgements, no models."""
+from dataclasses import asdict, replace
+from pathlib import Path
+import sys
+import threading
+import time
+
+import pytest
+
+from test_m1_vision_supervisor import rig, spec, run_pipeline, assert_drained, FAKE
+from orchestrator.services.vision_supervisor.supervisor import VisionError, Cancelled
+
+
+@pytest.mark.parametrize('fault', ['nonempty','blank','empty','mixed','string','null',
+                                 'dict','number','bool','missing_flags'])
+@pytest.mark.parametrize('entry', ['normal','force','replay'])
+def test_safety_all_entries(rig, fault, entry):
+    # This wrapper starts a second Python module. Keep safety assertions separate
+    # from the original .6-second fixture and the real 30-second deadline tests.
+    rig[3].deadline = 5
+    if entry == 'force':
+        rig = list(rig)
+        rig[1], _ = rig[0].begin('replacement', rig[1].page_id, force=True)
+    calls = []
+    worker = replace(spec(), argv=(sys.executable, '-I', str(Path(__file__).parent /
+        'fixtures/m1_v121_safety_worker.py'), str(FAKE.resolve()), fault))
+    # Replay invokes the same public pipeline rather than trusting old safety.
+    for _ in range(2 if entry == 'replay' else 1):
+        with pytest.raises(VisionError) as error:
+            rig[-1].run(rig[1], rig[-2], (96,128), lambda n:worker,
+                downstream=lambda _:calls.append('story/tts/video'), verify=lambda _:None)
+        assert error.value.code == (2004 if isinstance(error.value, Cancelled) else 3004)
+        assert rig[1].status == 'blocked' and calls == []
+        assert rig[4].read(rig[1].page_id) is None
+        assert list((rig[4].root/'bundles').iterdir()) == []
+    assert_drained(rig)
+
+
+@pytest.mark.parametrize('source', [None, '', 'unregistered', []])
+def test_missing_source_zero_downstream(rig, source):
+    with pytest.raises(VisionError) as error:
+        rig[-1].run(rig[1],rig[-2],(96,128),lambda n:replace(spec(),source_id=source),
+            downstream=lambda _:pytest.fail('safety bypass'),verify=lambda _:None)
+    assert error.value.code == 3004 and rig[1].status == 'blocked'
+    assert list((rig[4].root/'bundles').iterdir()) == []
+
+
+class Backend:
+    """FAKE only. A successful proof is never a real service-stop assertion."""
+    def __init__(self, mode='missing'):
+        self.mode = mode
+        self.calls = 0
+    def task_reference(self, identity):
+        self.calls += 1
+        return 'fake-task-' + identity.attempt_id
+    def settle(self, identity, task_ref, *, cancel):
+        if self.mode == 'missing': return None
+        if self.mode == 'exception': raise TimeoutError('fake cancellation timeout')
+        proof = dict(identity=asdict(identity),task_ref=task_ref,
+            termination_confirmed=True,request_result='cancelled' if cancel else 'completed',
+            confirmed_at=time.time())
+        if self.mode == 'wrong_task': proof['task_ref'] = 'wrong'
+        if self.mode == 'late': proof['identity']['attempt_id'] = 'old'
+        if self.mode == 'bool_epoch': proof['identity']['epoch'] = True
+        if self.mode == 'failed': proof['request_result'] = 'failed'
+        return proof
+
+
+def http(backend, mode='ok'):
+    return replace(spec(mode),execution_scope='http_service',backend=backend)
+
+
+@pytest.mark.parametrize('mode', ['missing','exception','wrong_task','late','bool_epoch','failed'])
+def test_unconfirmed_blocks_cross_page_retry_force_and_late_publish(rig, mode):
+    backend = Backend(mode)
+    with pytest.raises(VisionError, match='backend_execution_unconfirmed'):
+        rig[3].run(rig[1],rig[0],'ocr',lambda n:http(backend,'sleep'),rig[-2])
+    assert backend.calls == 1 and len(rig[0].backend_resources) == 1
+    assert rig[1].worker_state == 'reaped'
+    assert rig[1].backend_execution['termination_confirmed'] is False
+    with pytest.raises(VisionError): rig[0].begin('force',rig[1].page_id,force=True)
+    other,_ = rig[0].begin('cross-page','book01_p04')
+    with pytest.raises(VisionError,match='resource leased'):
+        rig[3].run(other,rig[0],'ocr',lambda n:http(Backend('confirmed')),rig[-2])
+    assert sum(e['event']=='started' for e in rig[2]) == 1
+    assert list((rig[4].root/'bundles').iterdir()) == []
+    with pytest.raises(Cancelled):
+        rig[4].publish(rig[1],rig[1].identity,{'late.json':b'{}'},verify=lambda _:None)
+
+
+@pytest.mark.parametrize('phase', ['register','running','settling'])
+def test_force_and_cross_page_inflight(rig, phase):
+    entered, release = threading.Event(), threading.Event()
+    class WaitingBackend(Backend):
+        def task_reference(self, identity):
+            if phase == 'register':
+                entered.set(); assert release.wait(10)
+            return super().task_reference(identity)
+        def settle(self, *args, **kwargs):
+            if phase == 'settling':
+                entered.set(); assert release.wait(10)
+            return None
+    backend = WaitingBackend()
+    def audit(e):
+        rig[2].append(e)
+        if phase == 'running' and e['event'] == 'started': entered.set()
+    rig[3].audit = audit
+    errors = []
+    def work():
+        try: rig[3].run(rig[1],rig[0],'ocr',lambda n:http(backend),rig[-2])
+        except BaseException as e: errors.append(e)
+    thread = threading.Thread(target=work); thread.start()
+    try:
+        assert entered.wait(5)
+        with pytest.raises(VisionError,match='backend_execution_unconfirmed'):
+            rig[0].begin('replace',rig[1].page_id,force=True)
+        assert rig[0].pages[rig[1].page_id] is rig[1]
+        other,_=rig[0].begin('other','book01_p04')
+        with pytest.raises(VisionError,match='resource leased'):
+            rig[3].run(other,rig[0],'ocr',lambda n:http(Backend()),rig[-2])
+    finally:
+        release.set(); thread.join(10)
+    assert not thread.is_alive() and errors
+    assert len(rig[0].backend_resources) == 1
+    assert sum(e['event']=='started' for e in rig[2]) <= 1
+    assert list(rig[3].root.iterdir()) == []
+
+
+def test_only_matching_confirmation_releases_without_reviving(rig):
+    backend = Backend()
+    with pytest.raises(VisionError):
+        rig[3].run(rig[1],rig[0],'ocr',lambda n:http(backend,'sleep'),rig[-2])
+    identity = rig[1].identity
+    task = rig[1].backend_execution['task_ref']
+    rig[0].cancel(rig[1])
+    for bad in ['wrong_task','late','bool_epoch']:
+        with pytest.raises(VisionError):
+            rig[3].settle_backend(rig[1],identity,Backend(bad),task,cancel=True,
+                fences=rig[0],resource_id='shared-http-backend')
+        assert len(rig[0].backend_resources) == 1
+    rig[3].settle_backend(rig[1],identity,Backend('confirmed'),task,cancel=True,
+        fences=rig[0],resource_id='shared-http-backend')
+    assert not rig[0].backend_resources and rig[1].status == 'cancelled'
+    new,_=rig[0].begin('replacement',rig[1].page_id,force=True)
+    snap=rig[3].run(new,rig[0],'ocr',lambda n:http(Backend('confirmed')),rig[-2])
+    assert snap.identity.generation_id == new.generation_id
+    with pytest.raises(VisionError):
+        rig[3].settle_backend(rig[1],identity,Backend('confirmed'),task,cancel=True,
+            fences=rig[0],resource_id='shared-http-backend')
+    assert rig[4].read(new.page_id) is None

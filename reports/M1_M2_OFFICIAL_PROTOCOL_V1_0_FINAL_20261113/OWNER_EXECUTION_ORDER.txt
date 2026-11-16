@@ -1,0 +1,884 @@
+# CODEX EXECUTION ORDER
+# M1/M2 OFFICIAL OFFLINE PROTOCOL V1.0
+# TASK: M1-M2-PROTOCOL-FINAL-001
+
+## 0. 正式授权
+
+项目负责人已于2026-11-13明确批准以下决策：
+
+- F01：批准
+- F02：批准
+- F03：批准，并采用本任务规定的文件安全补充要求
+- F04：批准
+- F05：批准，并采用本任务规定的确定性消息序列化
+- F06：批准
+- F07：批准，Profile A 优先，Profile B 独立
+- F08：批准，并采用每 Stage 最多两次总尝试、跨进程持久化的规则
+
+本次授权的目标是生成唯一正式协议：
+
+M1_M2_OFFLINE_PROTOCOL_V1.0
+
+协议范围仅限离线 Fake/Stub 接口协议。
+
+本次不授权：
+- 修改冻结公共 API v1.0。
+- 修改冻结公共 C1/C2 Schema。
+- 调用真实收费模型。
+- 真实供应商 POC。
+- 生产环境接线。
+- 上传或推送 dev。
+- 修改 M1/M2 核心业务代码。
+
+协议可以正式冻结，但代码实现是否符合协议必须单独审查。
+
+## 1. 输入基线
+
+### 1.1 M1 当前决策包
+
+目录：
+
+C:/Users/16173/Documents/ChatGPT/人工智能+/reports/M1_M2_PROTOCOL_V1_0_DECISION_PACKAGE/
+
+ZIP：
+
+C:/Users/16173/Documents/ChatGPT/人工智能+/reports/M1_M2_PROTOCOL_V1_0_DECISION_PACKAGE.zip
+
+必须阅读：
+
+- FINAL_REPORT.md
+- M1_M2_PROTOCOL_DECISION_REGISTER.md
+- M1_M2_OFFLINE_PROTOCOL_V1.0_DRAFT.md
+- SOURCE_IMPLEMENTATION_DIFFERENCES.md
+- OWNER_APPROVAL_CHECKLIST.md
+- SOURCE_LOCK.json
+- SOURCE_TRACEABILITY.md
+- 所有 Request、C1 Binding、Sidecar、Runtime、Error 附件。
+
+### 1.2 M1 原始证据包
+
+reports/M1_LEASE_002_REVIEW_AND_M2_HANDOFF/M1_LEASE_002_AND_M2_HANDOFF_EVIDENCE.zip
+
+SHA256：
+
+8d79406711b4619e5c2dcd2e0917f6c6668e58cb5f8e08c626d9590ae5a61bcf
+
+### 1.3 M2 原始代码包
+
+M2_V1.2.6_WORKER(1).zip
+
+必须通过以下 SHA256 锁定原件：
+
+3446b03bae8993a21e5cbff5f2ae639d8a4c43bfb08ca003f35b2957d6c1e505
+
+不得使用同名但哈希不同的 ZIP 替代。
+
+### 1.4 输入完整性
+
+开始前：
+
+1. 核对所有输入 ZIP 的 SHA256。
+2. 核对 CRC。
+3. 核对 Manifest。
+4. 核对 M1 源码锁定记录。
+5. 确认 M2 的 archive-only 来源状态。
+
+M2 没有可证实的 checkout、branch、HEAD 时，继续标记 UNKNOWN，不得冒用其他工作区信息。
+
+任何输入不一致，立即停止并报告。
+
+## 2. 输出位置
+
+在 M1 工作区新建：
+
+reports/M1_M2_OFFICIAL_PROTOCOL_V1_0_FINAL_20261113/
+
+目录必须不存在才允许创建。
+
+不得覆盖原有：
+
+- 决策包。
+- 草案。
+- Handoff。
+- 原始 ZIP。
+- 历史审计报告。
+
+原始决策包完整保留。
+
+新目录是唯一正式协议交付位置。
+
+## 3. F01：唯一协议身份与优先级
+
+正式协议：
+
+M1_M2_OFFLINE_PROTOCOL_V1.0
+
+协议状态：
+
+FROZEN
+
+批准状态：
+
+OWNER_APPROVED
+
+批准记录：
+
+- 批准方：项目负责人。
+- 批准日期：2026-11-13。
+- 批准依据：本次项目负责人明确批准 F01–F08 及三项补充要求。
+- 批准范围：Fake/Stub 离线接口协议。
+- 不包含真实模型、生产环境及 dev 发布。
+
+### 文件优先级
+
+严格采用：
+
+1. 已冻结公共 API 和公共 C1/C2 Schema。
+2. 本次负责人批准的 M1/M2 V1.0 离线协议。
+3. 锁定的 M1 Gate、Supervisor 和实际生产者实现，作为当前实现证据。
+4. 历史 M1 Handoff。
+5. 历史 M2 Worker Interface。
+
+说明：
+
+第二项是本次协议的规范性依据。
+
+第三项是当前实际实现证据，不能因为源码尚未符合新协议，就反向改变已经批准的协议。
+
+任何冲突必须进入 CONFORMANCE_GAP_REGISTER.md。
+
+协议字段、语义、枚举和状态规则不得在后续实施中静默改变。
+
+任何线级协议变更必须经过版本升级和重新签认。
+
+## 4. F02：Request、Result 和严格字段验证
+
+正式区分：
+
+- OCR Request
+- VLM Request
+- Worker Result
+- C1 Binding
+- Sidecar
+
+每个结构必须定义：
+
+- 必填字段。
+- 可选字段。
+- 数据类型。
+- null 规则。
+- 默认值。
+- 枚举。
+- 字段语义。
+- 校验责任方。
+- 失败行为。
+
+严格校验：
+
+1. 必填字段缺失：拒绝。
+2. 不允许 null 的字段为 null：拒绝。
+3. 类型错误：拒绝。
+4. 未知字段：协议 V1.0 中拒绝。
+5. 重复 JSON Key：拒绝。
+6. NaN、Infinity：拒绝。
+7. 协议版本不匹配：拒绝。
+8. 非法身份绑定：拒绝。
+
+严格未知字段规则仅作用于本协议明确管理的对象。
+
+不得擅自扩展或修改冻结公共 C1/C2 Schema。
+
+### 职责
+
+M1：
+- 创建可信 Request。
+- 创建可信 Binding。
+- 提供任务身份。
+- 提供快照。
+
+M2：
+- 验证 Request。
+- 验证 Binding。
+- 消费指定输入。
+- 返回 Result 和产物。
+
+M1：
+- 再次验证 Result。
+- 验证产物完整性。
+- 验证身份及 Gate。
+- 决定是否发布。
+
+## 5. F03：C1 Binding、快照和文件安全
+
+### 5.1 C1 基础要求
+
+- inputs.c1 使用绝对路径。
+- c1_binding 保存完整绑定信息。
+- C1 必须来自当前任务不可变快照。
+- 计算原始 C1 字节 SHA256。
+- 计算原始图片字节 SHA256。
+- 不允许目录扫描寻找其他 C1。
+- 不允许跨页、跨 revision、跨 generation 复用。
+- 不允许 VLM 隐式执行 OCR。
+
+### 5.2 Identity
+
+五个公共任务身份：
+
+- job_id
+- page_id
+- generation_id
+- input_revision
+- epoch
+
+OCR 和 VLM 各自拥有独立：
+
+- attempt_id
+- fencing_token
+
+规则：
+
+五个公共身份字段必须一致。
+
+OCR 与 VLM 的 attempt_id 和 fencing_token 不要求相等。
+
+每个新的 Attempt 必须由 M1 创建新的身份信息。
+
+不得让 M2 自行生成新的 Attempt 或自行重试。
+
+### 5.3 文件安全边界
+
+协议必须明确规定：
+
+1. 解析真实路径后检查其位于 M1 授权的快照根目录。
+2. 检查路径的每一级组件。
+3. 拒绝符号链接。
+4. Windows 下拒绝未经授权的 Reparse Point 和 Junction。
+5. 检查路径逃逸。
+6. 检查文件身份。
+7. 检查文件是否在校验后被替换。
+8. 尽量使用同一个已验证文件句柄完成读取及 Hash。
+9. 不得校验一个文件后重新打开另一个路径读取。
+10. 对硬链接进行可验证检查；无法证明安全时拒绝或标记为不支持。
+
+必须区分：
+
+- 词法路径校验。
+- 真实路径校验。
+- 文件句柄校验。
+- 原始字节 Hash 校验。
+- TOCTOU 防护。
+
+不能将简单的字符串前缀检查描述为完整文件安全。
+
+如果现有 M1/M2 实现无法保证某个 OS 安全属性，明确记录为实现缺口，不得宣称已验证。
+
+### 5.4 C1 Binding Schema
+
+以锁定 M1 源码和已批准协议语义生成最终 JSON Schema。
+
+不得随意更改已有字段名称。
+
+如果必须增加协议字段：
+
+- 在协议中明确给出字段名和含义。
+- 标记为新增规范要求。
+- 记录 M1 实现缺口。
+- 不得擅自修改 M1 源码补齐。
+
+必须提供跨 page、revision、generation、epoch、attempt 的反例。
+
+## 6. F04：Sidecar 业务语义
+
+### clothing
+
+- 字段可以缺失。
+- null 不允许。
+- 空字符串不允许作为缺失语义。
+- 不得虚构服装描述。
+- 只有真实观察到的内容才能填写。
+
+### appearance
+
+允许合法空值，但不得用虚构属性填充。
+
+### confidence.calibrated
+
+必须是原生 Boolean。
+
+规则：
+
+- calibrated=false：可以表示未经校准的模型估计。
+- calibrated=true：必须存在独立、有效、可复核的校准证据。
+- 模型自报 calibrated=true 不构成证据。
+- 无校准证据时必须使用 false。
+- 不得伪造 M5 评测结果。
+
+校准证据必须能关联实际模型版本、数据集及校准方法。
+
+如果当前 Sidecar Schema 没有对应证据引用字段，不得擅自添加公共字段。
+
+可以使用独立的 M5 校准证据登记机制；在该机制完成前，calibrated=true 不得被接受为已验证状态。
+
+### Gate 差异
+
+当前 M1 Gate 的实际行为可能与本次批准的缺失值语义不同。
+
+必须记录：
+
+- 当前 Gate 行为。
+- 正式协议规则。
+- 具体差异。
+- 后续修改责任。
+- 所需测试。
+
+不得为了让样例通过而伪造数据。
+
+Sidecar 的协议定义本次正式冻结，但 Gate 代码兼容仍待后续审查和实施。
+
+## 7. F05：Prompt Hash 与来源真实性
+
+### 7.1 Prompt Hash
+
+采用确定性消息序列化。
+
+Hash 对象为：
+
+实际提交给 Provider Adapter 的最终有序消息列表。
+
+必须包含：
+
+- 每条消息的 role。
+- 每条消息的最终 content。
+- 消息顺序。
+- 所有模板替换结果。
+- 实际使用的文本参数。
+
+采用确定性 JSON 序列化：
+
+- UTF-8。
+- 无 BOM。
+- 无额外空白。
+- 固定字段顺序或 RFC 8785 JCS。
+- 不允许 NaN/Infinity。
+- 不允许无效 Unicode。
+- 不允许擅自 trim。
+- 不允许修改消息顺序。
+
+对规范化后的最终字节计算 SHA256。
+
+必须区分：
+
+- Prompt Template Hash。
+- Final Prompt Hash。
+- Provider Request Hash。
+
+本协议的 prompt_sha256 指 Final Prompt Hash。
+
+不包含 API Key、Token、Secret。
+
+图片和其他二进制附件必须分别计算原始字节 SHA256，并记录与对应消息的关联。
+
+不得将模板文件 Hash 冒充最终 Prompt Hash。
+
+不得宣称该 Hash 证明 Provider 内部未修改消息。
+
+Hash 的证明范围是应用提交给 Provider Adapter 的精确消息内容。
+
+如果 SDK 在后续阶段进行了不可观察的转换，必须如实说明 Hash 的边界。
+
+### 7.2 来源模式
+
+合法枚举：
+
+- fixture
+- stub
+- real
+
+本次离线联调只允许：
+
+fixture、stub。
+
+real 不在本次执行授权范围内。
+
+component_mode=real 只是来源声明，不是实际供应商执行证明。
+
+必须区分：
+
+- 声明来源。
+- 实际调用来源。
+- Provider 记录。
+- 供应商回执。
+- 真实模型验证证据。
+
+## 8. F06：Observations 语义
+
+正式规则：
+
+- observations 必须存在。
+- 必须为数组。
+- 合法空结果允许 []。
+- appearance 可以为空。
+- clothing 可以缺失。
+- 不得伪造观察结果。
+- 不得通过填充虚构属性满足 Schema。
+
+必须区分：
+
+1. 正常成功且无观察对象。
+2. observations 缺失。
+3. VLM 执行失败。
+4. Result 不完整。
+5. Result 格式错误。
+
+只有成功完成且符合协议的空观察结果才能被视为合法空结果。
+
+不得将模型失败伪装为 observations=[]。
+
+M5 负责真实绘本的准确率、覆盖率及人工标注评测。
+
+Schema 验证不等于模型准确率验证。
+
+## 9. F07：Runtime Profile
+
+建立两个独立执行 Profile。
+
+### Profile A：M1/M2 Interface Fake/Stub Integration
+
+优先执行。
+
+使用真实锁定的：
+
+- 通用 Vision Supervisor。
+- Fences。
+- Gate。
+- M2 Worker。
+- Fake/Stub Provider。
+
+提取并记录：
+
+- 精确 Core。
+- 精确 Supervisor。
+- 精确 Runner。
+- 精确入口。
+- argv。
+- 工作目录。
+- 环境变量 allowlist。
+- 输入输出路径。
+- 退出码。
+- Result 文件。
+- 产物发布规则。
+
+只能使用当前源码中实际允许的环境变量。
+
+不得自行添加新的环境变量放行项。
+
+不得输出密钥值。
+
+### Profile B：LEASE-002 Resource Management
+
+独立执行。
+
+使用：
+
+- 精确 LEASE Core。
+- 精确 LEASE Supervisor。
+- 精确 lease_runner。
+- FakeProvider。
+
+验证：
+
+- 租约。
+- 重投。
+- unknown。
+- 对账。
+- 资源保留。
+- 释放条件。
+
+### 重要限制
+
+Profile A 和 Profile B 不能任意拼接。
+
+目前不存在已认证的统一 M1/M2+LEASE 生产执行链。
+
+协议必须如实记录。
+
+本次优先完成 Profile A 的后续接口准入准备。
+
+Profile B 独立保留。
+
+### 环境变量
+
+必须逐项从锁定源码提取。
+
+每个变量记录：
+
+- 名称。
+- 来源。
+- 是否允许继承。
+- 是否允许注入。
+- 是否为敏感配置。
+- 所属 Profile。
+- 默认行为。
+
+## 10. F08：错误码、状态与持久化重试
+
+### 10.1 每 Stage 最多两次总尝试
+
+正式规则：
+
+每个逻辑 Stage 最多两次总 Attempt：
+
+- Attempt 1：首次执行。
+- Attempt 2：最多一次重试。
+
+适用范围：
+
+每个独立的 job/page/generation/revision/epoch/stage 工作单元。
+
+OCR 和 VLM 分别计算次数。
+
+### 10.2 持久化要求
+
+Attempt 计数必须由 M1 权威管理。
+
+必须：
+
+1. 在提交前持久化 Attempt 记录。
+2. 为每次 Attempt 生成唯一 attempt_id。
+3. 为每次 Attempt 生成唯一 fencing_token。
+4. 跨进程重启保持计数。
+5. 跨 Supervisor 重启保持计数。
+6. 防止重复入口绕过次数上限。
+7. 防止并发提交重复占用 Attempt。
+8. 对提交结果 unknown 的情况保留已消耗的 Attempt 记录。
+
+M2 不得自行维护权威重试次数。
+
+M2 不得执行 SDK 隐式重试。
+
+M2 每次只执行 M1 指派的一次 Stage。
+
+如果当前 M1 尚未具备跨进程持久化计数能力，必须列入 M1 实现缺口，不得假称已实现。
+
+### 10.3 重试条件
+
+9001：
+不重试。
+
+3004：
+安全拦截，不重试。
+
+3001：
+保留原有合法 OCR empty 特殊处理，不将其当作普通错误重试。
+
+2004：
+必须区分 typed cancellation 和 transient error envelope。
+
+typed cancellation：
+不重试。
+
+transient error envelope：
+只有对应精确子类型或错误标识明确存在于 M1 retry allowlist 时，才允许重试。
+
+timeout：
+必须先取得可信终止确认，才允许考虑重试。
+
+cancellation：
+不自动重试。
+
+unknown：
+保留资源租约，等待对账；禁止自动重投。
+
+### 10.4 状态与退出码一致性
+
+成功必须同时满足：
+
+- Worker exit=0。
+- Result code=0。
+- Result 结构有效。
+- Identity 匹配。
+- 所有必需产物存在。
+- SHA256 正确。
+- Gate 接受。
+
+如果 exit 非零但 Result 声称成功，必须拒绝成功。
+
+如果 exit=0 但 Result 缺失，也必须拒绝成功。
+
+保留当前已确认的 3004 状态投影：
+
+Page blocked。
+
+Job failed/error。
+
+如果实际状态实现存在差异，记录为实现缺口。
+
+### 10.5 持久化测试
+
+必须覆盖：
+
+- 第一次执行。
+- 一次合法重试。
+- 第三次尝试拒绝。
+- Supervisor 重启。
+- 进程崩溃。
+- 重复入口。
+- 并发重投。
+- unknown。
+- timeout。
+- termination confirmation。
+- typed cancellation。
+- transient 2004。
+- 9001。
+- 3004。
+- 3001。
+
+## 11. P2 文档问题
+
+### P2-DOC-01
+
+正式协议明确：
+
+9001 不重试。
+
+精确 retry whitelist 优先。
+
+typed 2004 cancellation 与 transient error envelope 分开处理。
+
+不得静默修改冻结公共 API 原件。
+
+生成独立文件：
+
+PUBLIC_API_RETRY_ERRATA.md
+
+记录原文冲突、正式协议规则和未来文档修订建议。
+
+### P2-DOC-02
+
+所有源码行号重新生成。
+
+必须基于锁定 SHA256 的源码。
+
+每条引用记录：
+
+- 文件。
+- 行号。
+- SHA256。
+- 来源 checkout。
+- branch。
+- HEAD。
+- 对应协议章节。
+
+不得复制历史过期行号。
+
+## 12. 必须生成的交付文件
+
+在最终目录中创建：
+
+1. M1_M2_OFFLINE_PROTOCOL_V1.0.md
+2. OWNER_APPROVAL_RECORD.md
+3. PROTOCOL_DECISION_REGISTER.md
+4. REQUEST_SCHEMA.json
+5. C1_BINDING_SCHEMA.json
+6. C1_BINDING_EXAMPLE.json
+7. OCR_REQUEST_EXAMPLE.json
+8. VLM_REQUEST_EXAMPLE.json
+9. WORKER_RESULT_SCHEMA.json
+10. WORKER_RESULT_EXAMPLE.json
+11. SIDECAR_SCHEMA.json
+12. SIDECAR_EXAMPLES.json
+13. SIDECAR_GATE_MATRIX.md
+14. PROMPT_HASH_SPECIFICATION.md
+15. FILE_SECURITY_BOUNDARY.md
+16. RUNTIME_PAIRING_MATRIX.md
+17. ENVIRONMENT_ALLOWLIST.md
+18. ERROR_RETRY_STATE_MATRIX.md
+19. M1_M2_RESPONSIBILITY_BOUNDARY.md
+20. CONFORMANCE_GAP_REGISTER.md
+21. PUBLIC_API_RETRY_ERRATA.md
+22. SOURCE_TRACEABILITY.md
+23. SOURCE_LOCK.json
+24. PROTOCOL_CHANGELOG.md
+25. VALIDATION_RESULTS.json
+26. VALIDATION_LOG.txt
+27. MANIFEST.sha256
+28. FINAL_ACCEPTANCE_REPORT.md
+
+另外：
+
+- 提供所有 JSON 示例。
+- 提供完整 Gate 对照矩阵。
+- 提供每个字段的类型、null 和错误规则。
+- 提供正向及反向案例。
+
+## 13. CONFORMANCE GAP REGISTER
+
+必须把当前实现与正式协议逐项比较。
+
+至少覆盖：
+
+- M1 Request Producer。
+- M1 C1 Snapshot。
+- M1 c1_binding。
+- M1 Identity。
+- M1 Gate。
+- M1 Sidecar。
+- M1 Supervisor。
+- M1 Runtime。
+- M1 Retry。
+- M1 Lease。
+- M2 OCR Consumer。
+- M2 VLM Consumer。
+- M2 C1 Binding Consumer。
+- M2 Sidecar Producer。
+- M2 Prompt Hash。
+- M2 Result。
+- M2 错误处理。
+
+每项记录：
+
+| 字段 | 内容 |
+|---|---|
+| Protocol Rule | 正式规则 |
+| Current M1 | 当前实现 |
+| Current M2 | 当前实现 |
+| Gap | 差异 |
+| Severity | P0/P1/P2 |
+| Owner | M1/M2/Joint |
+| Required Change | 后续整改 |
+| Evidence | 文件、行号、SHA |
+| Test | 验收案例 |
+
+不得因为协议已冻结，就将未实现的功能标记为已完成。
+
+协议状态与代码符合性状态必须完全分开。
+
+## 14. 测试和验证
+
+本次只执行协议及文档层面的静态验证。
+
+至少验证：
+
+1. 所有 JSON 严格解析。
+2. 重复 Key 拒绝。
+3. NaN/Infinity 拒绝。
+4. 所有正向样例通过。
+5. 所有负向样例拒绝。
+6. Sidecar 示例与正式语义一致。
+7. C1 Binding 示例符合正式 Schema。
+8. Prompt Hash 示例可复算。
+9. Profile A/B 不混淆。
+10. 9001 和 2004 规则无歧义。
+11. 每 Stage 两次总尝试的规则在文档和测试中一致。
+12. 所有源码行号可以重新定位。
+13. 所有来源 SHA256 一致。
+
+不安装依赖。
+
+不调用真实模型。
+
+不运行收费请求。
+
+不声称 M2 已通过实际兼容测试。
+
+## 15. ZIP 与 Manifest
+
+生成：
+
+M1_M2_OFFICIAL_PROTOCOL_V1_0_FINAL.zip
+
+要求：
+
+- 包含完整正式协议目录。
+- 包含全部 JSON Schema 和示例。
+- 包含源码追溯。
+- 包含 Gap Register。
+- 包含验证日志。
+- 包含 Manifest。
+
+逐项检查：
+
+- ZIP CRC。
+- 文件数量。
+- 路径安全。
+- Manifest SHA256。
+- ZIP 内外文件一致。
+- JSON 样例一致。
+
+## 16. Git 和工作区保护
+
+开始前记录：
+
+- 当前分支。
+- HEAD。
+- 暂存区。
+- 已跟踪修改。
+- 未跟踪文件。
+
+禁止：
+
+- git reset。
+- git clean。
+- 覆盖旧报告。
+- 删除历史文件。
+- 修改 M1 核心源码。
+- 修改 M2 原始 ZIP。
+- 修改冻结公共 API。
+- 修改公共 C1/C2 Schema。
+- 修改其他成员 checkout。
+- stage。
+- commit。
+- push。
+- merge。
+- 创建 PR。
+
+本次只生成正式协议交付物。
+
+如果输出目录已经存在，停止并报告，不覆盖旧文件。
+
+## 17. 最终验收状态
+
+完成后必须明确输出：
+
+A. F01–F08 是否全部进入 OWNER_APPROVED。
+
+B. 三项补充要求是否全部落实。
+
+C. 协议是否标记 FROZEN。
+
+D. 正式协议是否仅限 Fake/Stub 离线联调。
+
+E. M1 实现差异清单。
+
+F. M2 实现差异清单。
+
+G. Profile A 是否具备后续接口联调条件。
+
+H. Profile B 是否仍独立。
+
+I. 文件安全和 TOCTOU 是否已被真实实现，还是仅定义规范。
+
+J. 两次 Attempt 持久化规则是否已被真实实现，还是仅定义规范。
+
+K. 所有 JSON 和静态检查结果。
+
+L. ZIP 和 Manifest 完整性。
+
+M. 九个 checkout 的保全核对结果。
+
+N. 是否存在阻断性问题。
+
+最后停止。
+
+不要自动修改 M1/M2 核心代码。
+
+不要自动开始联合联调。
+
+不要上传 dev。
+
+本次任务的成功标准是：
+
+生成一个唯一、正式、可审计、可供 M1/M2 后续代码整改和 Fake/Stub 联调使用的 M1_M2_OFFLINE_PROTOCOL_V1.0。
+
+协议冻结不代表代码验收通过。

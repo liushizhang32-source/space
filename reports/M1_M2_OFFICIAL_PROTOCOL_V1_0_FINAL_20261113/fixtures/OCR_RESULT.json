@@ -1,0 +1,17 @@
+{
+  "protocol": "m1-vision-worker/0.1",
+  "identity": {
+    "job_id": "job-offline-example",
+    "page_id": "book01_p03",
+    "generation_id": "generation-fixture-1",
+    "input_revision": 1,
+    "epoch": 1,
+    "attempt_id": "ocr-attempt-fixture-1",
+    "fencing_token": "ocr-token-fixture-1"
+  },
+  "code": 0,
+  "msg": "empty",
+  "artifacts": {
+    "c1": "json/book01_p03_ocr.json"
+  }
+}

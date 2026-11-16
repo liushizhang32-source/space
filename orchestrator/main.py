@@ -4,7 +4,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException
-from starlette.staticfiles import StaticFiles
+from orchestrator.services.vision_supervisor.authorization.asset_policy import AssetFiles
 
 from orchestrator.api.routes import router
 from orchestrator.core.config import Settings
@@ -67,7 +67,8 @@ def create_app(settings: Settings | None = None, *, m1_session_factory=None) -> 
 
     app.include_router(router)
     for directory in ('previews', 'json', 'audios', 'videos'):
-        app.mount('/' + directory, StaticFiles(directory=storage.root / directory), name=directory)
+        app.mount('/' + directory, AssetFiles(directory=storage.root / directory,
+                                             mode=settings.asset_mode), name=directory)
     return app
 
 
