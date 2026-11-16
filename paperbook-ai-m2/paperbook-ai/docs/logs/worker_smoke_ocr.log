@@ -1,0 +1,11 @@
+### ocr smoke
+command: python scripts/m2_vision_worker.py C:\Users\zhc\Documents\deepseek-harness\default-workspace\paperbook-ai\.tmp\smoke_ocr\request.json
+cwd: C:\Users\zhc\Documents\deepseek-harness\default-workspace\paperbook-ai\.tmp\smoke_ocr
+exit=0
+
+[m2-worker] stage=ocr page=smoke01_p01 code=0
+
+files:
+request.json
+result.json
+json\smoke01_p01_ocr.json

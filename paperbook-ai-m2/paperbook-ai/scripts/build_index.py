@@ -19,6 +19,9 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from vision import index as index_mod  # noqa: E402
 from vision.config import load_env  # noqa: E402
+from vision.index import UnsafeIndexError  # noqa: E402
+from vision.safety import clearance_for_document  # noqa: E402
+from vision.strictjson import StrictJsonError, loads_object  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -40,10 +43,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{json_dir} 下没有匹配 {pattern} 的文件")
         return 1
 
-    built = skipped = 0
+    built = skipped = blocked = 0
     total_objects = 0
     for file in files:
-        doc = json.loads(file.read_text(encoding="utf-8"))
+        try:
+            doc = loads_object(file.read_text(encoding="utf-8"))
+        except StrictJsonError as exc:
+            print(f"  [BLOCK] {file.name}: JSON 结构不可信（{exc.kind}）")
+            blocked += 1
+            continue
         if not doc.get("objects") and not (doc.get("description") or "").strip():
             # 打桩产物（VLM 未启用时 description 为空），不建库
             print(f"  跳过 {file.name}: 无物体且无描述（打桩产物）")
@@ -51,6 +59,11 @@ def main(argv: list[str] | None = None) -> int:
             continue
         try:
             page_index = index_mod.build_from_vlm(doc)
+        except UnsafeIndexError as exc:
+            # 安全旁路：明确拦截，且不计入“跳过”，让 CI/调用方看到非零退出
+            print(f"  [BLOCK] {file.name}: {exc}")
+            blocked += 1
+            continue
         except Exception as exc:  # noqa: BLE001
             print(f"  跳过 {file.name}: {exc}")
             skipped += 1
@@ -60,7 +73,8 @@ def main(argv: list[str] | None = None) -> int:
         existing_path = index_mod.index_path(data_dir, page_index.page_id)
         if existing_path.is_file():
             try:
-                previous = index_mod.load(data_dir, page_index.page_id)
+                clearance = clearance_for_document(page_index.page_id, doc)
+                previous = index_mod.load(data_dir, page_index.page_id, clearance=clearance)
                 page_index = index_mod.merge_annotations(page_index, previous)
             except Exception:  # noqa: BLE001 - 旧文件坏了就当没有
                 pass
@@ -70,10 +84,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  {page_index.page_id:<14} objects={len(page_index.objects):<3} "
               f"→ {target.relative_to(ROOT)}")
 
-    print(f"\n完成：{built} 页，{total_objects} 个物体，跳过 {skipped} 页")
+    print(f"\n完成：{built} 页，{total_objects} 个物体，跳过 {skipped} 页，安全拦截 {blocked} 页")
     if built:
         print(f"索引目录：{(data_dir / 'index').relative_to(ROOT)}")
-    return 0
+    return 2 if blocked else 0
 
 
 if __name__ == "__main__":

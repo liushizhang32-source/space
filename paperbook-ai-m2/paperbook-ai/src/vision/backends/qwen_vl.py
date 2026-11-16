@@ -20,12 +20,23 @@ import urllib.request
 
 from PIL import Image
 
-from ..safety import strict_safety
+from ..safety import parse_safety as parse_safety_record
+from ..strictjson import StrictJsonError, loads as strict_loads, loads_object as strict_loads_object
 from .base import VlmObject, VlmResult
 
 
 class VlmTimeout(RuntimeError):
     """HTTP / 连接超时；pipeline 依赖它把错误码映射成 2002。"""
+
+
+class VlmUnsafeOutput(RuntimeError):
+    """模型输出结构本身不安全（如重复键可能覆盖 safety）。"""
+
+    def __init__(self, kind: str, *, key: str = "") -> None:
+        self.kind = kind
+        self.key = key
+        detail = f"重复键 {key}" if kind == "duplicate_key" else kind
+        super().__init__(f"模型输出不安全：{detail}")
 
 
 class VlmOutputOverflow(RuntimeError):
@@ -143,12 +154,13 @@ def parse_flags(value) -> list[str]:
 
 
 def parse_safety(payload) -> tuple[bool, list[str]]:
-    """安全字段解析：**严格拒绝类型宽恕**（V1.2.1 P0-1）。
+    """兼容包装：返回 ``(是否安全, 原因列表)``，供旧调用方使用。
 
-    只认 ``{"pass": true, "flags": []}``；``"true"``、``1``、``"1"`` 等
-    一律判不安全，原因列表里写明具体哪条不合格。
+    V1.2.2 起请直接使用 :func:`vision.safety.parse_safety`，
+    它会额外保留原始 ``flags`` 与证据哈希；本包装不丢信息，只做投影。
     """
-    return strict_safety(payload)
+    record = parse_safety_record(payload)
+    return record.ok, list(record.reasons)
 
 
 def _parse_confidence(value) -> float | None:
@@ -171,30 +183,41 @@ def _parse_confidence(value) -> float | None:
     return number
 
 
-def _loads_json(content: str) -> dict:
-    start = content.find("{")
-    if start < 0:
-        raise ValueError("输出里没有 JSON 对象")
-    payload = content[start:]
-    end = payload.rfind("}")
-    if end > 0:
-        payload = payload[: end + 1]
-    try:
-        return json.loads(payload)
-    except json.JSONDecodeError:
-        pass
+class VlmIncompleteOutput(RuntimeError):
+    """模型输出不完整（截断/多段拼接）。
 
-    for cut in range(len(payload) - 1, max(len(payload) - 800, 0), -1):
-        if payload[cut] not in "}]":
-            continue
-        candidate = payload[: cut + 1]
-        candidate += "]" * max(0, candidate.count("[") - candidate.count("]"))
-        candidate += "}" * max(0, candidate.count("{") - candidate.count("}"))
-        try:
-            return json.loads(candidate)
-        except json.JSONDecodeError:
-            continue
-    raise ValueError(payload[:200])
+    V1.2.3 之前这里会“补齐括号 + 切到最后一个 }”把半截 JSON 救回来，
+    救回来的文档可能已经丢了 safety 段落，却仍被当成成功产物发布。
+    现在一律阻断：不修复、不补默认值；由 M1 按 2001（可重试）处理。
+    """
+
+
+def _loads_json(content: str) -> dict:
+    # 不做任何“找第一个 { 到最后一个 }”的切片：那等于允许模型输出被截断后
+    # 仍把中间一段当成完整文档（V1.2.4 复审 P0-1）。这里只接受两种形态：
+    #   1) 整段就是一个 JSON 对象；
+    #   2) 整个对象被一对 ``` 代码块包住。
+    text = (content or "").strip()
+    if text.startswith("```"):
+        first_newline = text.find("\n")
+        if first_newline < 0:
+            raise VlmIncompleteOutput("model_output_incomplete: 代码块没有换行")
+        body = text[first_newline + 1 :].rstrip()
+        if not body.endswith("```"):
+            raise VlmIncompleteOutput("model_output_incomplete: 代码块未闭合")
+        text = body[: -len("```")].rstrip()
+    if not text.startswith("{"):
+        raise VlmIncompleteOutput("model_output_incomplete: 输出不是 JSON 对象")
+    try:
+        return strict_loads(text)
+    except StrictJsonError as exc:
+        if exc.kind in ("invalid_json", "not_object"):
+            # 半截文档无法证明 safety 完整：只能判“不完整”，绝不修复
+            raise VlmIncompleteOutput(
+                f"model_output_incomplete: {exc.kind}"
+            ) from exc
+        # 重复键/非有限数字：安全字段可能已被覆盖，一律按“输出不可信”处理
+        raise VlmUnsafeOutput(exc.kind, key=exc.key) from exc
 
 
 class QwenVlBackend:
@@ -276,7 +299,11 @@ class QwenVlBackend:
                 raw = response.read(MAX_RESPONSE_BYTES + 1)
                 if len(raw) > MAX_RESPONSE_BYTES:
                     raise RuntimeError("VLM 响应超过大小上限，已丢弃")
-                body = json.loads(raw.decode("utf-8"))
+                try:
+                    # 传输层同样严格解析：重复键/NaN 可能掩盖 choices 里的内容
+                    body = strict_loads_object(raw.decode("utf-8"))
+                except StrictJsonError as exc:
+                    raise VlmUnsafeOutput(exc.kind, key=exc.key) from exc
         except urllib.error.HTTPError as exc:
             # 响应体可能回显请求内容，默认不落日志；排障时用 VISION_LOG_VERBOSE=1
             if verbose:
@@ -305,6 +332,10 @@ class QwenVlBackend:
     def _parse(content: str, size: tuple[int, int]) -> VlmResult:
         try:
             data = _loads_json(content)
+        except StrictJsonError as exc:
+            # 重复键 / 非有限数字：不是“格式小瑕疵”，而是安全数据可能被覆盖，
+            # 交给上层按 3004 阻断（不写 C2 / Sidecar）
+            raise VlmUnsafeOutput(exc.kind, key=exc.key) from exc
         except ValueError as exc:
             # 正文可能含用户内容，默认不带原文
             if os.getenv("VISION_LOG_VERBOSE") == "1":
@@ -350,13 +381,17 @@ class QwenVlBackend:
                 raise
             except Exception:  # noqa: BLE001 - 单个物体解析失败不影响整页
                 continue
-        safety_ok, safety_reasons = strict_safety(data.get("safety"))
+        record = parse_safety_record(data.get("safety"))
         return VlmResult(
             description=str(data.get("description", "")).strip(),
             objects=objects,
             scene_tags=[str(t) for t in (data.get("scene_tags") or [])],
-            safety_pass=safety_ok,
-            safety_flags=safety_reasons,
-            safety_source="model" if safety_ok else "unavailable",
+            # 只看 pass 的原始布尔值；flags 逐字保留，缺失保持 None
+            safety_pass=record.pass_value is True,
+            safety_flags=list(record.flags) if record.flags is not None else None,
+            safety_reasons=record.reasons,
+            safety_raw=record.raw,
+            safety_evidence=record.evidence_sha256,
+            safety_source="model" if record.present else "unavailable",
             confidence_missing=confidence_missing,
         )

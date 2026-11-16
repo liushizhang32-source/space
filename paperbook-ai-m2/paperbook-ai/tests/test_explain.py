@@ -1,4 +1,5 @@
 from vision import contracts, explain, index
+from vision.safety import SafetyVerdict, issue_clearance
 from vision.backends.base import VlmObject
 
 
@@ -93,5 +94,5 @@ def test_explanations_survive_save_load():
         page = _page()
         updated, _ = index.with_explanations(page, {"兔子": "它正要去拔胡萝卜"})
         index.save(updated, tmp)
-        loaded = index.load(tmp, "book01_p01")
+        loaded = index.load(tmp, "book01_p01", clearance=issue_clearance("book01_p01", SafetyVerdict(passed=True)))
         assert loaded.objects[0].explanation == "它正要去拔胡萝卜"

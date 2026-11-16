@@ -21,7 +21,7 @@ from PIL import Image
 from vision import worker
 from vision.backends.base import OcrLine, VlmObject, VlmResult
 
-from _helpers import temp_dir
+from _helpers import c1_binding, temp_dir
 
 IDENTITY = {
     "job_id": "job_01",
@@ -78,16 +78,32 @@ def _make_image(tmp: Path, name: str = "page.png") -> Path:
     return path
 
 
-def _request(tmp: Path, stage: str, outputs: dict, **extra) -> dict:
+def _request(tmp: Path, stage: str, outputs: dict | None = None, **extra) -> dict:
     image = _make_image(tmp)
+    page = IDENTITY["page_id"]
+    canonical = {
+        "c1": f"json/{page}_ocr.json",
+        "c2": f"json/{page}_vlm.json",
+        "sidecar": f"json/{page}_refs.json",
+    }
+    merged = {**canonical, **(outputs or {})}
     request = {
         "protocol": worker.PROTOCOL,
         "stage": stage,
-        "image_path": str(image),
-        "outputs": outputs,
+        "image_path": str(image), "result_path": "result.json", "image_sha256": hashlib.sha256(Path(image).read_bytes()).hexdigest(),
+        "outputs": merged,
         **IDENTITY,
     }
     request.update(extra)
+    inputs = request.get("inputs")
+    if stage == "vlm" and isinstance(inputs, dict) and inputs.get("c1"):
+        c1_path = (tmp / str(inputs["c1"])).resolve()
+        # M1 基准：inputs.c1 是 M1 分配的绝对路径
+        request["inputs"] = {"c1": str(c1_path)}
+        request["image_sha256"] = hashlib.sha256(image.read_bytes()).hexdigest()
+        request["c1_binding"] = c1_binding(
+            request, c1_path.read_bytes(), image.read_bytes()
+        )
     return request
 
 
@@ -102,6 +118,11 @@ def _vlm_result(**overrides) -> VlmResult:
         confidence_missing=0,
     )
     payload.update(overrides)
+    if "safety_raw" not in overrides:
+        payload["safety_raw"] = {
+            "pass": payload["safety_pass"],
+            "flags": payload["safety_flags"] if isinstance(payload["safety_flags"], list) else None,
+        }
     return VlmResult(**payload)
 
 
@@ -114,18 +135,13 @@ def _run_ocr(tmp: Path) -> dict:
 
 def _vlm_inputs(tmp: Path, ocr_request: dict) -> dict:
     c1_path = tmp / "json/book01_p01_ocr.json"
-    image_path = Path(ocr_request["image_path"])
-    return {
-        "c1": "json/book01_p01_ocr.json",
-        "c1_sha256": hashlib.sha256(c1_path.read_bytes()).hexdigest(),
-        "image_sha256": hashlib.sha256(image_path.read_bytes()).hexdigest(),
-    }
+    return {"c1": str(c1_path.resolve())}
 
 
 def _vlm_outputs() -> dict:
     return {
         "c2": "json/book01_p01_vlm.json",
-        "sidecar": "json/book01_p01_vlm.vision_refs.json",
+        "sidecar": "json/book01_p01_refs.json",
     }
 
 
@@ -176,13 +192,13 @@ def test_vlm_success_requires_c2_and_sidecar_with_sha_binding():
 
         c2_bytes = (tmp / "json/book01_p01_vlm.json").read_bytes()
         sidecar = json.loads(
-            (tmp / "json/book01_p01_vlm.vision_refs.json").read_text("utf-8")
+            (tmp / "json/book01_p01_refs.json").read_text("utf-8")
         )
         assert sidecar["schema_version"] == "vision_refs/0.1"
-        assert sidecar["contract_status"] == "candidate"
-        assert sidecar["identity"] == IDENTITY
-        assert sidecar["identity"]["attempt_id"] == "att_01"
-        assert sidecar["job_id"] == "job_01"  # 扁平镜像
+        assert "identity" not in sidecar
+        assert "contract_status" not in sidecar
+        assert sidecar["job_id"] == "job_01"  # 协议要求顶层扁平七元
+        assert sidecar["attempt_id"] == "att_01"
         assert sidecar["c2"]["sha256"] == hashlib.sha256(c2_bytes).hexdigest()
         assert sidecar["c2"]["relative_path"] == "json/book01_p01_vlm.json"
 
@@ -212,9 +228,9 @@ def test_vlm_safety_block_writes_no_artifacts():
         assert envelope["code"] == worker.ERROR_SAFETY_BLOCKED == 3004
         assert envelope["transient"] is False
         assert envelope["artifacts"] == {}
-        assert envelope["detail"]["verdict"]["pass"] is False
+        assert "safety_blocked" in envelope["msg"], envelope["msg"]
         assert not (tmp / "json/book01_p01_vlm.json").exists()
-        assert not (tmp / "json/book01_p01_vlm.vision_refs.json").exists()
+        assert not (tmp / "json/book01_p01_refs.json").exists()
 
 
 def test_vlm_uses_inputs_c1_text():
@@ -244,7 +260,8 @@ def test_path_traversal_is_rejected():
         assert envelope["code"] == 9001
         assert "bad_request" in envelope["msg"]
         assert not (tmp.parent / "evil.json").exists()
-        assert json.loads((tmp / "result.json").read_text("utf-8"))["code"] == 9001
+        # 协议 F02：请求不可信时不写 result.json（避免伪 identity）
+        assert not (tmp / "result.json").exists()
 
 
 def test_missing_identity_is_bad_request():
@@ -256,7 +273,7 @@ def test_missing_identity_is_bad_request():
         assert code == 2
         assert envelope["code"] == 9001
         assert "fencing_token" in envelope["msg"]
-        assert "fencing_token" not in envelope["identity"]
+        assert "identity" not in envelope
 
 
 def test_timeout_maps_to_2002_transient():

@@ -1,4 +1,5 @@
 from vision import contracts, index
+from vision.safety import SafetyVerdict, issue_clearance
 from vision.backends.base import VlmObject
 
 
@@ -70,7 +71,7 @@ def test_save_and_load_roundtrip():
         page = index.build_from_vlm(_doc())
         path = index.save(page, tmp)
         assert path.is_file()
-        loaded = index.load(tmp, "book01_p01")
+        loaded = index.load(tmp, "book01_p01", clearance=issue_clearance("book01_p01", SafetyVerdict(passed=True)))
         assert loaded.page_id == page.page_id
         assert [o.label for o in loaded.objects] == [o.label for o in page.objects]
         assert loaded.objects[0].bbox == page.objects[0].bbox

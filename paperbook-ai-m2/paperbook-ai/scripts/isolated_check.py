@@ -101,6 +101,26 @@ class _NoneVlm:
         return None
 
 
+class _SafeVlm:
+    """模拟“模型给出可信安全结论”的后端；stub 默认是不安全的。"""
+
+    name = "safe-vlm"
+
+    def available(self):
+        return True, ""
+
+    def understand(self, image, ocr_text):
+        return VlmResult(
+            description="小兔子出门了",
+            objects=[VlmObject("兔子", (20.0, 20.0, 120.0, 160.0), 0.8)],
+            scene_tags=["森林"],
+            safety_pass=True,
+            safety_flags=[],
+            safety_raw={"pass": True, "flags": []},
+            safety_source="model",
+        )
+
+
 class _MalformedOcr:
     name = "malformed-ocr"
 
@@ -123,7 +143,7 @@ def run(data: Path) -> None:
     def _normal():
         result = pipeline.run_page(
             image_path=page, book_id="isobook1", page_no=1, data_dir=data,
-            ocr_backend=StubOcrBackend("小兔子出门了"), vlm_backend=StubVlmBackend(),
+            ocr_backend=StubOcrBackend("小兔子出门了"), vlm_backend=_SafeVlm(),
         )
         assert result.ok, (result.ocr_error, result.vlm_error)
         assert set(result.ocr) == {
@@ -135,15 +155,18 @@ def run(data: Path) -> None:
         assert validate.validate_vlm(result.vlm) == []
         return f"ocr={result.ocr['status']} vlm={result.vlm['status']}"
 
-    @check("02 stub 的 safety 必须是 false（打桩≠已审查）")
+    @check("02 stub 的 safety=false 必须被门禁拦成 3004")
     def _stub_safety():
         result = pipeline.run_page(
             image_path=page, book_id="isobook2", page_no=1, data_dir=data,
             ocr_backend=None, vlm_backend=StubVlmBackend(), run_ocr=False,
         )
-        assert result.vlm["safety"]["pass"] is False
-        assert "stub_mock" in result.vlm["safety"]["flags"]
-        return "safety=false + stub_mock"
+        # V1.2.2：打桩返回 pass=false + stub_mock，属于“模型明确说存在风险”，
+        # 不能落成正常 C2，必须由统一门禁拦成 3004
+        assert result.vlm is None, result.vlm
+        assert result.vlm_error is not None and result.vlm_error.code == 3004, result.vlm_error
+        assert not (data / "json" / "isobook2_p01_vlm.json").exists()
+        return "code=3004 无 C2"
 
     @check("03 无字页 → ocr empty 且 page_confidence=0")
     def _empty():
@@ -224,21 +247,38 @@ def run(data: Path) -> None:
     @check("09 safety 缺失/未知 → 判不安全")
     def _safety():
         assert parse_safety(None) == (False, ["safety_missing"])
-        passed, flags = parse_safety({"pass": "maybe"})
-        assert passed is False and "safety_unparsed" in flags
+        assert parse_safety({"pass": True, "flags": []}) == (True, [])
+        # V1.2.2：flags 缺失不再默认空数组，必须阻断并留原因
+        for payload, want in (
+            ({}, "safety_pass_missing"),
+            ({"pass": True}, "safety_flags_missing"),
+            ({"pass": "true"}, "safety_pass_not_true"),
+            ({"pass": 1}, "safety_pass_not_true"),
+            ({"pass": True, "flags": "ok"}, "safety_flags_not_list"),
+        ):
+            passed, reasons = parse_safety(payload)
+            assert passed is False and want in reasons, (payload, reasons)
+        passed, flags = parse_safety({"pass": True, "flags": [" "]})
+        assert passed is False and "safety_flag_blank" in flags
+        # 非空 flags 即使 pass=true 也必须阻断，且保留原 flag 文本
+        passed, flags = parse_safety({"pass": True, "flags": ["violence"]})
+        assert passed is False and "flag:violence" in flags
         content = '{"description":"x","objects":[],"scene_tags":[],"safety":{"pass":"false"}}'
         assert QwenVlBackend._parse(content, (100, 100)).safety_pass is False
         return "fail-closed"
 
-    @check("10 超过 99 块 → 截断而不是整页失败")
+    @check("10 超过 99 块 → 明确拒绝，不截断")
     def _cap():
         lines = [OcrLine(f"行{i}", [1, 1 + i % 50, 60, 2 + i % 50], 0.9) for i in range(120)]
-        doc = contracts.build_ocr_document(
-            book_id="isobook9", page_id="isobook9_p01", page_no=1,
-            image_width=100, image_height=100, lines=lines, elapsed_ms=1, backend="stub",
-        )
-        assert len(doc["text_blocks"]) == 99
-        return "99"
+        try:
+            contracts.build_ocr_document(
+                book_id="isobook9", page_id="isobook9_p01", page_no=1,
+                image_width=100, image_height=100, lines=lines, elapsed_ms=1, backend="stub",
+            )
+        except contracts.ContractLimitError as exc:
+            assert exc.kind == "text_blocks" and exc.actual == 100
+            return "ContractLimitError(100 > 99)"
+        raise AssertionError("超过 99 块必须拒绝，不能截断成 99 条成功")
 
     @check("11 省略 safety 参数 → 构造即报错")
     def _explicit_safety():

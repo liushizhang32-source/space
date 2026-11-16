@@ -18,6 +18,29 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .safety import SafetyBlocked, SafetyClearance, parse_safety
+from .strictjson import StrictJsonError, loads_object
+
+
+class UnsafeIndexError(ValueError):
+    """索引来源的 C2 未通过安全门禁：禁止建库，也禁止用旧索引提供服务。"""
+
+    def __init__(
+        self,
+        page_id: str,
+        reasons: tuple[str, ...] | list[str] | None = None,
+        *,
+        message: str | None = None,
+    ) -> None:
+        self.page_id = page_id
+        self.reasons = list(reasons or ())
+        if message is not None:
+            super().__init__(message)
+        else:
+            super().__init__(
+                f"{page_id} 的安全结论不可信，拒绝建索引: {','.join(self.reasons)}"
+            )
+
 from .mask import MaskResult, point_in_polygon
 
 INDEX_VERSION = "1.0"
@@ -124,9 +147,17 @@ class PageIndex:
 
 
 def build_from_vlm(vlm_doc: dict[str, Any]) -> PageIndex:
-    """vlm.json → PageIndex。status=failed 的页不建库。"""
+    """vlm.json → PageIndex。
+
+    安全门禁与 Worker/pipeline 一致：``safety`` 必须是原始 JSON 里的
+    ``pass is True`` + 空 flags。缺失/字符串 true/非空 flags 一律拒绝，
+    不允许用旧入口把不安全页悄悄建成可点读索引（V1.2.4 复审 P0-2）。
+    """
     if vlm_doc.get("status") == "failed":
         raise ValueError(f"{vlm_doc.get('page_id')} 的 vlm.json 是 failed，跳过")
+    record = parse_safety(vlm_doc.get("safety"))
+    if not record.ok:
+        raise UnsafeIndexError(str(vlm_doc.get("page_id")), record.reasons)
     producer = vlm_doc.get("producer") or {}
     return PageIndex(
         page_id=vlm_doc["page_id"],
@@ -277,6 +308,63 @@ def save(index: PageIndex, data_dir: str | Path) -> Path:
     return target
 
 
-def load(data_dir: str | Path, page_id: str) -> PageIndex:
-    with index_path(data_dir, page_id).open("r", encoding="utf-8") as handle:
-        return PageIndex.from_dict(json.load(handle))
+def load(
+    data_dir: str | Path,
+    page_id: str,
+    *,
+    clearance: "SafetyClearance | None" = None,
+) -> PageIndex:
+    """读取索引前必须持有**本次安全判定**签发的凭证。
+
+    V1.2.6 P0-02：磁盘上的历史索引再完整，也不能脱离当前任务的安全结论
+    被直接加载；没有凭证就拒绝，避免“安全拦截后用旧索引恢复”。
+    """
+    if clearance is None:
+        raise UnsafeIndexError(
+            page_id,
+            message="索引读取缺少安全放行凭证：必须先通过安全门禁再读索引，不得复用历史索引",
+        )
+    if not isinstance(clearance, SafetyClearance):  # 防伪造对象
+        raise UnsafeIndexError(page_id, message="安全放行凭证类型非法")
+    if clearance.page_id != page_id:
+        raise UnsafeIndexError(
+            page_id,
+            message=f"安全放行凭证属于 {clearance.page_id!r}，不能用于 {page_id!r}",
+        )
+    # 索引文件也走严格解析：重复键可能覆盖 objects/bbox，属于数据完整性风险
+    path = index_path(data_dir, page_id)
+    try:
+        doc = loads_object(path.read_text(encoding="utf-8"))
+    except StrictJsonError as exc:
+        raise ValueError(f"索引文件结构不可信（{exc.kind}）: {path}") from exc
+    return PageIndex.from_dict(doc)
+
+
+def load_after_gate(
+    data_dir: str | Path,
+    page_id: str,
+    *,
+    vlm_path: str | Path | None = None,
+) -> PageIndex:
+    """离线工具用：先用磁盘上的 C2 复检安全，再签发凭证并读取索引。
+
+    顺序是“先门禁、后索引”——门禁不过就不会走到 ``load``。
+    """
+    from .safety import clearance_for_document
+    from .strictjson import loads_object as _loads_object
+
+    base = Path(data_dir)
+    target = Path(vlm_path) if vlm_path is not None else base / "json" / f"{page_id}_vlm.json"
+    try:
+        doc = _loads_object(target.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise UnsafeIndexError(page_id, message=f"没有可校验的 C2：{target}") from exc
+    except StrictJsonError as exc:
+        raise UnsafeIndexError(page_id, message=f"C2 结构不可信（{exc.kind}）: {target}") from exc
+    if str(doc.get("page_id") or "") != page_id:
+        raise UnsafeIndexError(page_id, message=f"C2 的 page_id 与请求不一致: {target}")
+    try:
+        clearance = clearance_for_document(page_id, doc)
+    except SafetyBlocked as exc:
+        raise UnsafeIndexError(page_id, message=f"C2 未通过安全门禁：{exc.verdict.message()}") from exc
+    return load(base, page_id, clearance=clearance)

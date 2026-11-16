@@ -30,12 +30,13 @@ import sys
 from pathlib import Path
 
 from . import preprocess, writer
+from .strictjson import StrictJsonError, loads_object as strict_loads_object
 from .backends import build_vlm_backend
 
 
 def run(job_path: Path) -> int:
     try:
-        job = json.loads(job_path.read_text(encoding="utf-8"))
+        job = strict_loads_object(job_path.read_text(encoding="utf-8"))
         image_path = Path(job["image_path"])
         out_path = Path(job["out_path"])
         ocr_text = str(job.get("ocr_text") or "")
@@ -60,17 +61,32 @@ def run(job_path: Path) -> int:
             ],
             "scene_tags": list(result.scene_tags),
             "safety_pass": result.safety_pass,
-            "safety_flags": list(result.safety_flags),
+            # 逐字回传原始 flags（None 表示模型没给这个字段），不做任何补全
+            "safety_flags": list(result.safety_flags) if result.safety_flags is not None else None,
+            "safety_reasons": list(result.safety_reasons),
+            "safety_raw": result.safety_raw,
+            "safety_evidence": result.safety_evidence,
             "safety_source": result.safety_source,
             "confidence_missing": int(result.confidence_missing),
         }
         writer.write_json_exclusive(out_path, payload)
         return 0
     except Exception as exc:  # noqa: BLE001
+        from .backends.qwen_vl import VlmUnsafeOutput
+
+        if isinstance(exc, VlmUnsafeOutput):
+            # 安全字段可能被重复键覆盖：必须让上层按 3004 处理，不能混成普通失败
+            failure = {
+                "ok": False,
+                "error_kind": "VlmUnsafeOutput",
+                "kind": exc.kind,
+                "key": exc.key,
+                "reason": f"{type(exc).__name__}: {str(exc)[:200]}",
+            }
+        else:
+            failure = {"ok": False, "reason": f"{type(exc).__name__}: {str(exc)[:200]}"}
         try:
-            writer.write_json_exclusive(
-                out_path, {"ok": False, "reason": f"{type(exc).__name__}: {str(exc)[:200]}"}
-            )
+            writer.write_json_exclusive(out_path, failure)
         except Exception:  # noqa: BLE001
             pass
         print(f"[vlm-child] ERROR {type(exc).__name__}", file=sys.stderr)

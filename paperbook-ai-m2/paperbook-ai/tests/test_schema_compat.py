@@ -120,14 +120,19 @@ def test_builder_rejects_non_bool_safety():
         raise AssertionError(f"safety_pass={value!r} 应被拒绝")
 
 
-def test_blocks_are_capped_at_99():
+def test_over_limit_blocks_are_rejected_not_truncated():
+    """V1.2.4 P0-1：超量必须明确拒绝，禁止静默截断后当作成功。"""
     lines = [OcrLine(f"第{i}行", [1, 1 + i % 90, 50, 2 + i % 90], 0.9) for i in range(120)]
-    doc = contracts.build_ocr_document(
-        book_id="book01", page_id="book01_p01", page_no=1,
-        image_width=100, image_height=100, lines=lines, elapsed_ms=1, backend="stub",
-    )
-    assert len(doc["text_blocks"]) == 99          # 截断而不是整页失败
-    assert doc["text_blocks"][-1]["order"] == 99
+    try:
+        contracts.build_ocr_document(
+            book_id="book01", page_id="book01_p01", page_no=1,
+            image_width=100, image_height=100, lines=lines, elapsed_ms=1, backend="stub",
+        )
+    except contracts.ContractLimitError as exc:
+        assert exc.kind == "text_blocks"
+        assert exc.actual == 100 and exc.limit == 99
+    else:
+        raise AssertionError("超过 99 行必须抛 ContractLimitError，不得截断")
 
 
 # ---------- 2. 安全值解析 ----------
@@ -148,14 +153,17 @@ def test_parse_bool_handles_strings():
 
 def test_parse_safety_is_fail_closed():
     # V1.2.1 P0-1：只认原生布尔 true；"true"/1/"1" 一律不算安全
-    assert parse_safety({"pass": True}) == (True, [])
+    # V1.2.2：flags 必须存在且是数组，缺失不再默认空数组
+    assert parse_safety({"pass": True}) == (False, ["safety_flags_missing"])
     assert parse_safety({"pass": True, "flags": []}) == (True, [])
-    assert parse_safety({"pass": "true"}) == (False, ["safety_pass_not_true"])
-    assert parse_safety({"pass": 1}) == (False, ["safety_pass_not_true"])
+    assert parse_safety({"pass": "true"})[0] is False
+    assert "safety_pass_not_true" in parse_safety({"pass": "true"})[1]
+    assert parse_safety({"pass": 1})[0] is False
     assert parse_safety({"pass": "false"})[0] is False
     assert parse_safety({"pass": False, "flags": ["暴力"]})[0] is False
-    assert parse_safety({"pass": True, "flags": "暴力"}) == (False, ["safety_flags_not_list"])
-    assert parse_safety({"pass": True, "flags": ["  "]}) == (False, ["safety_flag_blank"])
+    assert parse_safety({"pass": True, "flags": "暴力"})[0] is False
+    assert parse_safety({"pass": True, "flags": ["  "]})[0] is False
+    assert "safety_flag_blank" in parse_safety({"pass": True, "flags": ["  "]})[1]
 
     # 缺失 / null / 未知 / 类型不对 —— 一律判不安全并留原因
     for payload, flag in (
@@ -187,14 +195,18 @@ def test_vlm_parse_treats_false_string_as_false():
     result = QwenVlBackend._parse(content, (100, 100))
     assert result.safety_pass is False
     # 字符串 "false" 不是原生布尔、flags 不是数组，按 V1.2.1 两条都拒绝
-    assert result.safety_flags == ["safety_pass_not_true", "safety_flags_not_list"]
-    assert result.safety_source == "unavailable"
+    # V1.2.2：safety_flags 保留模型原值（None=不可信），原因单独留在 safety_reasons
+    assert result.safety_flags is None
+    assert "safety_pass_not_true" in result.safety_reasons
+    assert "safety_flags_not_list" in result.safety_reasons
+    # 来源如实记录“模型给过 safety 对象”，是否可信由门禁按原因判定
+    assert result.safety_source == "model"
 
     doc = contracts.build_vlm_document(
         book_id="book01", page_id="book01_p01", page_no=1,
         image_width=100, image_height=100, description=result.description,
         objects=result.objects, scene_tags=result.scene_tags,
-        safety_pass=result.safety_pass, safety_flags=result.safety_flags,
+        safety_pass=result.safety_pass, safety_flags=list(result.safety_flags or ()),
         elapsed_ms=1, backend="vlm",
     )
     assert doc["safety"]["pass"] is False
@@ -291,7 +303,7 @@ def test_run_vlm_only_skips_ocr():
         def understand(self, image, ocr_text):
             from vision.backends.base import VlmResult
 
-            return VlmResult(description="画面", objects=[], scene_tags=[], safety_pass=True)
+            return VlmResult(description="画面", objects=[], scene_tags=[], safety_pass=True, safety_flags=[], safety_raw={"pass": True, "flags": []}, safety_source="model")
 
     with temp_dir() as root:
         image = root / "p.png"
@@ -347,7 +359,7 @@ def test_cli_only_vlm_never_builds_ocr_backend():
             return True, ""
 
         def understand(self, image, ocr_text):
-            return VlmResult(description="画面", objects=[], scene_tags=[], safety_pass=True)
+            return VlmResult(description="画面", objects=[], scene_tags=[], safety_pass=True, safety_flags=[], safety_raw={"pass": True, "flags": []}, safety_source="model")
 
     def _boom(*args, **kwargs):
         raise AssertionError("--only vlm 不应构造 OCR 后端")

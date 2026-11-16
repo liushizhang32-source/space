@@ -26,7 +26,7 @@ FALLBACK_ANSWER = "这个问题我还不知道，我们一起看看书上画了�
 
 def make_response(page_id: str, x: int, y: int, data_dir: Path) -> dict:
     # 索引常驻内存时，一次点读只有几十微秒；这里把"读文件"和"命中"分开计时
-    page = vindex.load(data_dir, page_id)
+    page = vindex.load_after_gate(data_dir, page_id)
     started = time.perf_counter()
     obj, how = vindex.hit_test(page, x, y)
     elapsed = (time.perf_counter() - started) * 1000

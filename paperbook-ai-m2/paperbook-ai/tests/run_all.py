@@ -29,6 +29,11 @@ MODULES = (
     "test_pipeline",
     "test_worker",
     "test_worker_v121",
+    "test_strictjson", "test_v124_p0", "test_v124_p1", "test_layout", "test_characters", "test_frame",
+    "test_backend_task",
+    "test_v126",
+    "test_m1_gate_compat",
+    "test_protocol_v10",
 )
 
 

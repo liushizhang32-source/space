@@ -1,0 +1,19 @@
+==================================================================
+�Ӿ�ģ�� �� �����Լ죨������ / ��ģ�� / ��ʱĿ¼��
+��ʱĿ¼��C:\Users\zhc\Documents\deepseek-harness\default-workspace\paperbook-ai\data\_isolated_628b5ab3
+==================================================================
+[PASS] 01 ����ҳ���� ocr.json + vlm.json  ocr=ok vlm=ok
+[PASS] 02 stub �� safety ������ false����׮������飩  safety=false + stub_mock
+[PASS] 03 ����ҳ �� ocr empty �� page_confidence=0  empty/0
+[PASS] 04 OCR ���� �� failed �ļ� + ������־  code=2001
+[PASS] 05 VLM ���� �� ������ vlm.json + ��־  code=2002
+[PASS] 06 VLM ���� None �� 9002������ɹ�  code=9002
+[PASS] 07 ���� OCR ���ݲ��ж���ˮ��  blocks=2
+[PASS] 08 EXIF=6 ͼƬ��image_width ���ļ��ߴ�  800x600
+[PASS] 09 safety ȱʧ/δ֪ �� �в���ȫ  fail-closed
+[PASS] 10 ���� 99 �� �� �ض϶�������ҳʧ��  99
+[PASS] 11 ʡ�� safety ���� �� ���켴����  TypeError
+[PASS] 12 Ŀ¼��û�в����� vlm.json ʧ���ļ�  ok/empty only
+[PASS] 13 HTTP ��ʱ��װ�� �� ������ 2002  URLError(timeout) �� 2002
+------------------------------------------------------------------
+13/13 ͨ��

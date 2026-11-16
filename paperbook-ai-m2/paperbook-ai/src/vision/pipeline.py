@@ -22,10 +22,13 @@ from pathlib import Path
 from typing import Any
 
 from . import contracts, ids, preprocess, validate, writer
+from .backends.qwen_vl import VlmUnsafeOutput
+from .safety import ERROR_SAFETY_BLOCKED, SafetyBlocked, evaluate_vlm_safety
 from .backends.base import OcrBackend, VlmBackend
 
 ERROR_MODEL_CALL = 2001      # 模型调用失败（§1.3）
 ERROR_TIMEOUT = 2002         # 超时（§1.3）
+ERROR_INPUT_TOO_LARGE = 1004  # 超量/超限：明确拒绝，不静默截断
 ERROR_CONTRACT = 9001        # 构造/校验不通过（内部错误通道）
 ERROR_BACKEND_PROTOCOL = 9002  # 后端违反返回协议（如返回 None）
 
@@ -180,6 +183,11 @@ def run_page(
                 if errors:
                     raise ValueError(errors[0])
                 ocr_doc, ocr_path = _publish(data_path, page_id, writer.OCR_KIND, doc)
+            except contracts.ContractLimitError as exc:
+                ocr_error = StageError(
+                    "ocr", ERROR_INPUT_TOO_LARGE,
+                    f"contract_limit: {exc.kind} {exc.actual}>{exc.limit}", elapsed,
+                )
             except Exception as exc:  # noqa: BLE001 - 构造/校验异常也不许掀翻流水线
                 ocr_error = StageError(
                     "ocr", ERROR_CONTRACT, _safe_message(exc), elapsed
@@ -213,6 +221,14 @@ def run_page(
         started = time.perf_counter()
         try:
             result = vlm_backend.understand(page.image, ocr_text)
+        except VlmUnsafeOutput as exc:
+            # 模型输出含重复键/非有限数字：安全数据可能已被覆盖，按 3004 阻断
+            vlm_error = StageError(
+                "vlm",
+                ERROR_SAFETY_BLOCKED,
+                f"safety_blocked:model_output_{exc.kind}",
+                int((time.perf_counter() - started) * 1000),
+            )
         except Exception as exc:  # noqa: BLE001
             vlm_error = _stage_error("vlm", exc, int((time.perf_counter() - started) * 1000))
         else:
@@ -224,6 +240,11 @@ def run_page(
                 )
             else:
                 try:
+                    # 旧入口（CLI/pipeline）与 Worker 共用同一套安全门禁：
+                    # 判定不过直接 3004，且不写任何 C2
+                    verdict = evaluate_vlm_safety(result)
+                    if not verdict.passed:
+                        raise SafetyBlocked(verdict, page_id=page_id, stage="vlm")
                     doc = contracts.build_vlm_document(
                         book_id=book_id,
                         page_id=page_id,
@@ -234,7 +255,7 @@ def run_page(
                         objects=result.objects,
                         scene_tags=result.scene_tags,
                         safety_pass=result.safety_pass,
-                        safety_flags=result.safety_flags,
+                        safety_flags=list(result.safety_flags or ()),
                         elapsed_ms=elapsed,
                         backend=getattr(vlm_backend, "name", "unknown"),
                         to_original=to_original,
@@ -243,6 +264,23 @@ def run_page(
                     if errors:
                         raise ValueError(errors[0])
                     vlm_doc, vlm_path = _publish(data_path, page_id, writer.VLM_KIND, doc)
+                except VlmUnsafeOutput as exc:
+                    vlm_error = StageError(
+                        "vlm",
+                        ERROR_SAFETY_BLOCKED,
+                        f"safety_blocked:model_output_{exc.kind}",
+                        elapsed,
+                    )
+                except SafetyBlocked as exc:
+                    vlm_error = StageError(
+                        "vlm", ERROR_SAFETY_BLOCKED, exc.verdict.message(), elapsed
+                    )
+                except contracts.ContractLimitError as exc:
+                    # 超量必须明确拒绝：不截断、不落盘
+                    vlm_error = StageError(
+                        "vlm", ERROR_INPUT_TOO_LARGE,
+                        f"contract_limit: {exc.kind} {exc.actual}>{exc.limit}", elapsed,
+                    )
                 except Exception as exc:  # noqa: BLE001
                     vlm_error = StageError(
                         "vlm", ERROR_CONTRACT, _safe_message(exc), elapsed

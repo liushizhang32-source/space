@@ -54,18 +54,22 @@ C:\...\paperbook-ai\.venv\Scripts\python.exe ^
 | `image_path` | 绝对路径 | 必须存在且通过 `input_guard` |
 | `result_path` | 相对路径 | 默认 `result.json` |
 | `outputs` | object | OCR：`{"c1": rel}`；VLM：`{"c2": rel, "sidecar": rel}`；三者必须互不相同、不得等于 `result_path`、不得已存在 |
-| `inputs` | object，**VLM 必填** | `{"c1": rel, "c1_sha256": hex64, "image_sha256": hex64}` |
+| `image_sha256` | string，**VLM 必填** | 本次图片原始字节的 SHA-256（M1 放在**请求顶层**，`supervisor.py:274`） |
+| `inputs` | object，**VLM 必填** | `{"c1": 绝对路径}`；兼容旧字段 `c1_sha256`/`image_sha256` |
+| `c1_binding` | object，**VLM 必填** | `{"identity": {七元（OCR attempt）}, "sha256": C1 原始字节, "image_sha256": 图片字节}`；与请求逐项比对，只要求共享五元一致 |
 
 路径规则：必须是相对路径、不含 `..`、解析后仍在 attempt 目录内；任一段是符号链接/junction
 也直接拒绝。校验发生在**跑模型之前**，返回 `code=9001` + 退出码 2，不触碰文件系统。
 
 ### VLM 必带的 C1（V1.2.1 P1-5）
 
-VLM 阶段**不再允许**进程内补跑 OCR。请求必须带：
+VLM 阶段**不再允许**进程内补跑 OCR。请求必须带（与 `M1_TO_M2_V1.2_WORKER_HANDOFF.md` 及 `gate.py` 对齐）：
 
-1. `inputs.c1`：M1 校验过的那份 C1 文件（相对 attempt 目录）；
-2. `inputs.c1_sha256`：该文件**原始字节**的 SHA-256；
-3. `inputs.image_sha256`：本次图片原始字节的 SHA-256。
+1. `inputs.c1`：M1 校验过的那份 C1 文件，**绝对路径**（相对路径仅作兼容）；拒绝链接/junction/硬链接（`st_nlink != 1`）/非普通文件；
+2. `c1_binding.identity`：OCR attempt 的七元身份；M2 要求七元齐全、类型严格，但只与本次请求比对
+   `job_id/page_id/generation_id/input_revision/epoch`（`attempt_id`/`fencing_token` 允许不同，与 `gate.py:36-38` 同口径）；
+3. `c1_binding.sha256`：该 C1 文件**原始字节**的 SHA-256；
+4. `image_sha256`（顶层）与 `c1_binding.image_sha256`：本次图片原始字节的 SHA-256，两者必须一致。
 
 Worker 会校验：C1 字节哈希、`page_id`、`book_id/page_no`、`status ∈ {ok,empty}`、
 `image_width/height` 与当前图片一致、图片字节哈希一致。任一不符 → `9001`（不重试）。
@@ -126,8 +130,9 @@ OCR 无字按成功处理（`status=empty` 的合法 C1，`code=0`）。
 只有同时满足下面三条才发布 C2：
 
 1. 后端 `VlmResult.safety_pass is True`（**原生布尔**；`"true"`、`1` 都不算）；
-2. `safety_flags` 是 `list[str]` 且没有任何非空元素；
-3. `safety_source == "model"`（stub 或补出来的结论一律不可信）。
+2. `safety_flags` 必须是 `list[str]`、无空白元素，且**必须为空**（非空即 fail-closed）；
+3. `safety_source == "model"`（stub 或补出来的结论一律不可信）；
+4. 原始 JSON 里没有重复键，且 `safety_raw` 与解析结果逐字段一致（见 6.1）。
 
 否则 `safety.evaluate_vlm_safety` 返回不通过，Worker：
 
@@ -139,6 +144,21 @@ OCR 无字按成功处理（`status=empty` 的合法 C1，`code=0`）。
 `parse_safety` 直接给 `pass=false, flags=["safety_missing"]`（V1.2.1 起细分为
 `safety_pass_missing`/`safety_pass_not_true`/`safety_flags_not_list` 等），同样落到 3004。
 因此不存在“模型没给安全结论就默认安全”的路径。
+
+### 6.1 原始 JSON 结构不可信
+
+模型输出、`request.json`、C1 文件、子进程 `out.json` 全部走
+`vision.strictjson`，**不经过 `json.loads` 的宽松解析**：
+
+| 情况 | 处理 |
+|---|---|
+| 同一对象里出现重复键（含嵌套、含数组内对象） | `duplicate_key`，VLM 输出 → `3004`；请求/C1 → `9001` |
+| `NaN` / `Infinity` 字面量 | `non_finite_number`，同上 |
+| 顶层不是对象 | `not_object`，请求类 → `9001` |
+
+理由：`{"safety":{"pass":true,"flags":["violence"],"flags":[]}}` 在默认解析下
+会静默变成 `flags=[]`，风险信息在进入判定前就丢了。拒绝必须发生在解析层，
+不能指望后面的 schema 校验补回来。
 
 ## 7. Sidecar（`vision_refs/0.1`）
 
@@ -157,9 +177,9 @@ OCR 无字按成功处理（`status=empty` 的合法 C1，`code=0`）。
 - `confidence`：0<value≤1 用 `{"value":…, "kind":"model_estimate", "calibrated": false}`，
   缺失/0 用 `{"value":null, "kind":"unavailable", "calibrated":false}`；
   bool/NaN/字符串一律按“缺失”处理，不猜；
-- `appearance.clothing` 当前恒为 `null`（模型不给服装），类型声明为 `str | null`；
+- `appearance.clothing`：默认**省略该键**（表示“未知”；M1 Gate 当前不接受 `null`）；识别到服装时写字符串；`M2_SIDECAR_CLOTHING=null` 可显式输出 `null`（仅供 Gate 后续支持）；
 - `identity_status` 固定 `unknown`，**M2 不定义 canonical/character 身份**；
-- `source.component_mode`：`real`（真实后端）或 `stub`（打桩）；
+- `source.component_mode`：`fixture` / `stub` / `real` 三态（与 M1 基准一致）；
   `prompt_sha256` 取实际使用的提示词模板哈希，stub 时为占位值。
 
 > 该 schema 是 M1 交接的**候选协议**，字段名/路径在接线前需三方确认；

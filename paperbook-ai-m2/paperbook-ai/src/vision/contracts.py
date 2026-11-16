@@ -26,8 +26,22 @@ VLM_STATUS = (STATUS_OK, STATUS_EMPTY)
 MODULE_NAME = "vision"
 MODULE_VERSION = "0.1.0"
 
-# block_id / object_id 用两位序号，超过 99 就必须截断，否则整页崩（F06 / M2-06）
+# block_id / object_id 用两位序号，上限 99。超量必须**明确拒绝**：
+# 静默截断会把风险内容丢掉后仍产出成功产物（V1.2.4 复审 P0-1）。
 MAX_ITEMS = 99
+
+
+class ContractLimitError(ValueError):
+    """条目数超过冻结上限。调用方映射为 1004，且不得落盘任何产物。"""
+
+    def __init__(self, kind: str, actual: int, limit: int = MAX_ITEMS) -> None:
+        super().__init__(f"{kind} 超量：{actual} > {limit}")
+        self.kind = kind
+        self.actual = actual
+        self.limit = limit
+
+    def to_dict(self) -> dict:
+        return {"kind": self.kind, "actual": self.actual, "limit": self.limit}
 
 
 def emit_extra_fields() -> bool:
@@ -122,8 +136,8 @@ def build_text_blocks(
     """
     blocks: list[dict[str, Any]] = []
     for line in lines:
-        if len(blocks) >= MAX_ITEMS:  # 两位序号上限，多余的行丢弃而不是整页失败
-            break
+        if len(blocks) >= MAX_ITEMS:  # 两位序号上限：超量必须拒绝，不能靠截断丢掉内容
+            raise ContractLimitError("text_blocks", len(blocks) + 1)
         text = getattr(line, "text", "")
         if not isinstance(text, str):
             text = "" if text is None else str(text)  # 后端给了非字符串也不崩
@@ -212,8 +226,8 @@ def build_objects(
 ) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for obj in objects:
-        if len(result) >= MAX_ITEMS:
-            break
+        if len(result) >= MAX_ITEMS:  # 超量必须拒绝：静默截断可能丢掉风险物体
+            raise ContractLimitError("objects", len(result) + 1)
         label = getattr(obj, "label", "")
         if not isinstance(label, str):
             label = "" if label is None else str(label)

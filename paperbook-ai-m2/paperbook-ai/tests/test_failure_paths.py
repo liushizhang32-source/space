@@ -28,7 +28,7 @@ class _NullVlm:
         return True, ""
 
     def understand(self, image, ocr_text):
-        return VlmResult(description="", objects=[], scene_tags=[], safety_pass=True)
+        return VlmResult(description="", objects=[], scene_tags=[], safety_pass=True, safety_flags=[], safety_raw={"pass": True, "flags": []})
 
 
 class _NoneVlm:

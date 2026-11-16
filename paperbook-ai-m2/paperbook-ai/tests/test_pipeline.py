@@ -4,7 +4,28 @@ from _helpers import temp_dir
 from PIL import Image, ImageDraw
 
 from vision import pipeline, validate, writer
+from vision.backends.base import VlmObject, VlmResult
 from vision.backends.stub import StubOcrBackend, StubVlmBackend
+
+
+class _SafeVlm(StubVlmBackend):
+    """模拟“模型已给出可信安全结论”的后端。
+
+    StubVlmBackend 默认 `safety_pass=False + flags=["stub_mock"]`，
+    会被统一门禁判 3004——这正是 fail-closed 的预期。本类只用于
+    验证“通过门禁后能正常写 C1/C2”的路径。
+    """
+
+    def understand(self, image, ocr_text, **_kwargs):
+        return VlmResult(
+            description="小兔子在森林里",
+            objects=[VlmObject("兔子", (100.0, 100.0, 400.0, 400.0), 0.8)],
+            scene_tags=["森林"],
+            safety_pass=True,
+            safety_flags=[],
+            safety_raw={"pass": True, "flags": []},
+            safety_source="model",
+        )
 
 
 def _make_page(path, size: tuple[int, int] = (1200, 1800)):
@@ -25,7 +46,7 @@ def test_run_page_writes_both_contract_files():
             page_no=3,
             data_dir=root / "data",
             ocr_backend=StubOcrBackend("小兔子在森林里"),
-            vlm_backend=StubVlmBackend(),
+            vlm_backend=_SafeVlm(),
         )
         assert result.page_id == "book01_p03"
         assert result.ocr_path == root / "data" / "json" / "book01_p03_ocr.json"
@@ -45,7 +66,7 @@ def test_output_survives_reload_and_validates():
             page_no=1,
             data_dir=root,
             ocr_backend=StubOcrBackend("从前有座山"),
-            vlm_backend=StubVlmBackend(),
+            vlm_backend=_SafeVlm(),
         )
         ocr = writer.read_json(root / "json" / "book02_p01_ocr.json")
         vlm = writer.read_json(root / "json" / "book02_p01_vlm.json")
@@ -63,7 +84,7 @@ def test_large_image_bbox_stays_in_original_frame():
             page_no=2,
             data_dir=root,
             ocr_backend=StubOcrBackend("大图"),
-            vlm_backend=StubVlmBackend(),
+            vlm_backend=_SafeVlm(),
         )
         assert result.ocr["image_width"] == 2400
         assert result.ocr["image_height"] == 3600
@@ -131,8 +152,67 @@ def test_empty_page_becomes_empty_status():
             page_no=1,
             data_dir=root,
             ocr_backend=StubOcrBackend(""),
-            vlm_backend=StubVlmBackend(),
+            vlm_backend=_SafeVlm(),
         )
         assert result.ocr["status"] == "empty"
         assert result.ocr["text_blocks"] == []
         assert result.ok
+
+
+def test_pipeline_blocks_untrusted_safety_with_3004():
+    """旧入口（pipeline/CLI）必须和 Worker 共用同一套安全门禁。"""
+
+    class _Unsafe(StubVlmBackend):
+        def understand(self, image, ocr_text, **_kwargs):
+            return VlmResult(
+                description="画面",
+                objects=[VlmObject("人物", (10.0, 10.0, 90.0, 120.0), 0.8)],
+                scene_tags=[],
+                safety_pass=True,
+                safety_flags=[],
+                safety_raw={"pass": True, "flags": []},
+                safety_source="unavailable",  # 来源不可信
+            )
+
+    with temp_dir() as root:
+        page = _make_page(root / "page.png")
+        result = pipeline.run_page(
+            image_path=page,
+            book_id="book03",
+            page_no=1,
+            data_dir=root / "data",
+            ocr_backend=StubOcrBackend("文字"),
+            vlm_backend=_Unsafe(),
+        )
+        assert result.vlm is None
+        assert result.vlm_error is not None and result.vlm_error.code == 3004, result.vlm_error
+        assert not (root / "data" / "json" / "book03_p01_vlm.json").exists()
+
+
+def test_pipeline_blocks_nonempty_flags_with_3004():
+    class _Flagged(StubVlmBackend):
+        def understand(self, image, ocr_text, **_kwargs):
+            return VlmResult(
+                description="画面",
+                objects=[VlmObject("人物", (10.0, 10.0, 90.0, 120.0), 0.8)],
+                scene_tags=[],
+                safety_pass=True,
+                safety_flags=["violence"],
+                safety_raw={"pass": True, "flags": ["violence"]},
+                safety_source="model",
+            )
+
+    with temp_dir() as root:
+        page = _make_page(root / "page.png")
+        result = pipeline.run_page(
+            image_path=page,
+            book_id="book04",
+            page_no=1,
+            data_dir=root / "data",
+            ocr_backend=StubOcrBackend("文字"),
+            vlm_backend=_Flagged(),
+        )
+        assert result.vlm is None
+        assert result.vlm_error.code == 3004
+        assert "flag:violence" in result.vlm_error.message
+        assert not (root / "data" / "json" / "book04_p01_vlm.json").exists()

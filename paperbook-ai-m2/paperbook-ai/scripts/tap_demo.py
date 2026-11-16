@@ -44,7 +44,7 @@ def main(argv: list[str] | None = None) -> int:
     load_env()
     data_dir = Path(args.data_dir)
     try:
-        page_index = index_mod.load(data_dir, args.page_id)
+        page_index = index_mod.load_after_gate(data_dir, args.page_id)
     except FileNotFoundError:
         print(f"没有索引：{index_mod.index_path(data_dir, args.page_id)}")
         print("先跑 python scripts/build_index.py")
