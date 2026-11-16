@@ -1,0 +1,1 @@
+"""Offline internal M1 prototype. No HTTP registration or real provider support."""

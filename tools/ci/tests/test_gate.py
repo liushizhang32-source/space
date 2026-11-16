@@ -73,9 +73,22 @@ class GateTests(unittest.TestCase):
         self.assertEqual(self.summary_fixture(True), 1)
 
     def test_summary_rejects_failed_upstream_despite_passing_tests(self):
-        dependencies = {name: {'result': 'success'} for name in ('resolve', 'infrastructure', 'tests')}
+        dependencies = {name: {'result': 'success'} for name in ('resolve', 'infrastructure', 'tests', 'm1-runtime')}
         dependencies['infrastructure']['result'] = 'failure'
         self.assertEqual(self.summary_fixture(False, dependencies), 1)
+
+    def test_summary_rejects_missing_m1_upstream(self):
+        dependencies = {name: {'result': 'success'} for name in ('resolve', 'infrastructure', 'tests')}
+        self.assertEqual(self.summary_fixture(False, dependencies), 1)
+
+    def test_summary_rejects_failed_m1_despite_green_legacy_groups(self):
+        dependencies = {name: {'result': 'success'} for name in ('resolve', 'infrastructure', 'tests', 'm1-runtime')}
+        dependencies['m1-runtime']['result'] = 'failure'
+        self.assertEqual(self.summary_fixture(False, dependencies), 1)
+
+    def test_summary_accepts_all_required_upstreams(self):
+        dependencies = {name: {'result': 'success'} for name in ('resolve', 'infrastructure', 'tests', 'm1-runtime')}
+        self.assertEqual(self.summary_fixture(False, dependencies), 0)
 
 
 if __name__ == '__main__':

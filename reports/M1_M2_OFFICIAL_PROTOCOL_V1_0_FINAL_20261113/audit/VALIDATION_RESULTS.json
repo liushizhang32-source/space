@@ -1,0 +1,463 @@
+{
+  "scope": "static contracts and side-effect-free frozen-model/Gate.refs checks; not Worker integration or provider execution",
+  "validator": "standard-library strict subset validator; full emitted keyword subset checked; not an independent complete JSON Schema engine",
+  "filesystem_scope": "synthetic paths checked lexically only; link/junction/hardlink, TOCTOU and OS confinement remain later behavioral checks",
+  "freshness_scope": "trusted expected OCR identity supplied as test context; not independently authenticated by wire JSON",
+  "passed": 75,
+  "failed": 0,
+  "results": [
+    {
+      "name": "all generated JSON parses strictly",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "binding schema",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "OCR Request exact producer fields",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "VLM Request and C1 context",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "public frozen C1 Python validators",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "VLM success result",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "OCR success empty result",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "OCR 3001 valid empty nonzero-exit exception",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "2004 error envelope is failure even with exit0",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "proposed Sidecar Clothing observed",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "locked Gate.refs Clothing observed",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "proposed Sidecar Clothing unobserved",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "locked Gate.refs Clothing unobserved",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "proposed Sidecar Appearance empty",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "locked Gate.refs Appearance empty",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "proposed Sidecar Confidence unavailable",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "locked Gate.refs Confidence unavailable",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "proposed Sidecar Confidence model_estimate",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "locked Gate.refs Confidence model_estimate",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "proposed Sidecar Uncalibrated estimate pending independent M5 evidence",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "locked Gate.refs Uncalibrated estimate pending independent M5 evidence",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "proposed Sidecar Empty observations",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "locked Gate.refs Empty observations",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "reject missing inputs",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: $ missing keys"
+    },
+    {
+      "name": "reject null c1",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: $.inputs.c1 wrong native type"
+    },
+    {
+      "name": "reject unknown request field",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: $ unknown keys {'extra'}"
+    },
+    {
+      "name": "reject unknown binding field",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: $.c1_binding unknown keys {'extra'}"
+    },
+    {
+      "name": "reject unknown identity field",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: $.c1_binding.identity unknown keys {'extra'}"
+    },
+    {
+      "name": "reject bool revision",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: $.input_revision wrong native type"
+    },
+    {
+      "name": "reject float epoch",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: $.epoch wrong native type"
+    },
+    {
+      "name": "reject unsupported protocol",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: $.protocol wrong constant"
+    },
+    {
+      "name": "reject cross-job_id binding",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: not the trusted OCR snapshot identity"
+    },
+    {
+      "name": "reject cross-page_id binding",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: not the trusted OCR snapshot identity"
+    },
+    {
+      "name": "reject cross-generation_id binding",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: not the trusted OCR snapshot identity"
+    },
+    {
+      "name": "reject cross-input_revision binding",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: not the trusted OCR snapshot identity"
+    },
+    {
+      "name": "reject cross-epoch binding",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: not the trusted OCR snapshot identity"
+    },
+    {
+      "name": "reject stale OCR attempt_id",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: not the trusted OCR snapshot identity"
+    },
+    {
+      "name": "reject conflated OCR/VLM attempt_id",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: OCR/VLM attempts not separate"
+    },
+    {
+      "name": "reject stale OCR fencing_token",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: not the trusted OCR snapshot identity"
+    },
+    {
+      "name": "reject conflated OCR/VLM fencing_token",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: OCR/VLM attempts not separate"
+    },
+    {
+      "name": "reject C1 hash mismatch",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: raw C1 hash mismatch"
+    },
+    {
+      "name": "reject image hash mismatch",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: raw image hash mismatch"
+    },
+    {
+      "name": "reject bound image mismatch",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: bound image hash mismatch"
+    },
+    {
+      "name": "reject outside snapshot boundary",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: outside approved snapshot boundary"
+    },
+    {
+      "name": "reject path traversal",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: outside approved snapshot boundary"
+    },
+    {
+      "name": "reject relative C1",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: outside approved snapshot boundary"
+    },
+    {
+      "name": "reject outputs collision",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: "
+    },
+    {
+      "name": "reject VLM fields on OCR",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: $ unknown keys {'inputs'}"
+    },
+    {
+      "name": "reject unknown Sidecar root",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: $ unknown keys {'contract_status'}"
+    },
+    {
+      "name": "reject null clothing",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: $.observations[0].appearance.clothing wrong native type"
+    },
+    {
+      "name": "reject empty clothing",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: $.observations[0].appearance.clothing minLength"
+    },
+    {
+      "name": "reject whitespace clothing",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: unobserved/empty clothing"
+    },
+    {
+      "name": "reject integer calibrated",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: $.observations[0].confidence.calibrated wrong native type"
+    },
+    {
+      "name": "reject unavailable calibrated true",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: "
+    },
+    {
+      "name": "reject unavailable numeric value",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: "
+    },
+    {
+      "name": "reject missing estimate value",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: "
+    },
+    {
+      "name": "reject bool estimate",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: $.observations[0].confidence.value wrong native type"
+    },
+    {
+      "name": "reject out-of-range estimate",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: "
+    },
+    {
+      "name": "reject unknown calibration evidence",
+      "pass": true,
+      "expected": "reject",
+      "detail": "KeyError: 'model-self-asserted'"
+    },
+    {
+      "name": "reject model calibration mismatch",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: "
+    },
+    {
+      "name": "reject real mode offline",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: $.source.component_mode wrong enum"
+    },
+    {
+      "name": "reject prompt hash mismatch",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: "
+    },
+    {
+      "name": "reject missing observations",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: $ missing keys"
+    },
+    {
+      "name": "reject null observations",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: $.observations wrong native type"
+    },
+    {
+      "name": "reject foreign object",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: "
+    },
+    {
+      "name": "reject nested private unknown",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: $.observations[0].appearance unknown keys {'hair'}"
+    },
+    {
+      "name": "reject canonical identity",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: $.observations[0] unknown keys {'canonical_id'}"
+    },
+    {
+      "name": "reject C2 raw hash mismatch",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: "
+    },
+    {
+      "name": "reject old Sidecar generation",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: sidecar identity"
+    },
+    {
+      "name": "reject nonzero exit with success result",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: success with nonzero process exit"
+    },
+    {
+      "name": "reject result unknown detail",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: $ unknown keys {'detail'}"
+    },
+    {
+      "name": "reject duplicate JSON key",
+      "pass": true,
+      "expected": "reject",
+      "detail": "ValueError: duplicate key: x"
+    },
+    {
+      "name": "reject nonfinite JSON",
+      "pass": true,
+      "expected": "reject",
+      "detail": "ValueError: nonfinite NaN"
+    },
+    {
+      "name": "source stage run loop is exactly (1,2)",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "nine checkout Git states and diffs preserved",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    }
+  ],
+  "examples": 7,
+  "provider_calls": 0,
+  "worker_launches": 0
+}
