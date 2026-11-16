@@ -1,0 +1,9 @@
+# 视觉模块运行依赖（CPU 即可跑通契约层与测试）
+# 真实 OCR 的依赖见文末注释，或直接 pip install paddlepaddle paddleocr
+
+pillow>=10.0
+numpy>=1.26
+
+# ---- 真实 OCR（按需安装，约 400MB，建议独立 venv）----
+# paddlepaddle
+# paddleocr
