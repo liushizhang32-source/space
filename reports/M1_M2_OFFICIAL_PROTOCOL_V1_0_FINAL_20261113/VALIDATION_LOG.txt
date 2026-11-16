@@ -1,0 +1,170 @@
+PASS all generated JSON parses strictly | accepted
+PASS binding schema | accepted
+PASS OCR Request exact producer fields | accepted
+PASS VLM Request and C1 context | accepted
+PASS public frozen C1 Python validators | accepted
+PASS VLM success result | accepted
+PASS OCR success empty result | accepted
+PASS OCR 3001 valid empty nonzero-exit exception | accepted
+PASS 2004 error envelope is failure even with exit0 | accepted
+PASS proposed Sidecar Clothing observed | accepted
+PASS locked Gate.refs Clothing observed | accepted
+PASS proposed Sidecar Clothing unobserved | accepted
+PASS locked Gate.refs Clothing unobserved | accepted
+PASS proposed Sidecar Appearance empty | accepted
+PASS locked Gate.refs Appearance empty | accepted
+PASS proposed Sidecar Confidence unavailable | accepted
+PASS locked Gate.refs Confidence unavailable | accepted
+PASS proposed Sidecar Confidence model_estimate | accepted
+PASS locked Gate.refs Confidence model_estimate | accepted
+PASS proposed Sidecar Uncalibrated estimate pending independent M5 evidence | accepted
+PASS locked Gate.refs Uncalibrated estimate pending independent M5 evidence | accepted
+PASS proposed Sidecar Empty observations | accepted
+PASS locked Gate.refs Empty observations | accepted
+PASS reject missing inputs | AssertionError: $ missing keys
+PASS reject null c1 | AssertionError: $.inputs.c1 wrong native type
+PASS reject unknown request field | AssertionError: $ unknown keys {'extra'}
+PASS reject unknown binding field | AssertionError: $.c1_binding unknown keys {'extra'}
+PASS reject unknown identity field | AssertionError: $.c1_binding.identity unknown keys {'extra'}
+PASS reject bool revision | AssertionError: $.input_revision wrong native type
+PASS reject float epoch | AssertionError: $.epoch wrong native type
+PASS reject unsupported protocol | AssertionError: $.protocol wrong constant
+PASS reject cross-job_id binding | AssertionError: not the trusted OCR snapshot identity
+PASS reject cross-page_id binding | AssertionError: not the trusted OCR snapshot identity
+PASS reject cross-generation_id binding | AssertionError: not the trusted OCR snapshot identity
+PASS reject cross-input_revision binding | AssertionError: not the trusted OCR snapshot identity
+PASS reject cross-epoch binding | AssertionError: not the trusted OCR snapshot identity
+PASS reject stale OCR attempt_id | AssertionError: not the trusted OCR snapshot identity
+PASS reject conflated OCR/VLM attempt_id | AssertionError: OCR/VLM attempts not separate
+PASS reject stale OCR fencing_token | AssertionError: not the trusted OCR snapshot identity
+PASS reject conflated OCR/VLM fencing_token | AssertionError: OCR/VLM attempts not separate
+PASS reject C1 hash mismatch | AssertionError: raw C1 hash mismatch
+PASS reject image hash mismatch | AssertionError: raw image hash mismatch
+PASS reject bound image mismatch | AssertionError: bound image hash mismatch
+PASS reject outside snapshot boundary | AssertionError: outside approved snapshot boundary
+PASS reject path traversal | AssertionError: outside approved snapshot boundary
+PASS reject relative C1 | AssertionError: outside approved snapshot boundary
+PASS reject outputs collision | AssertionError: 
+PASS reject VLM fields on OCR | AssertionError: $ unknown keys {'inputs'}
+PASS reject unknown Sidecar root | AssertionError: $ unknown keys {'contract_status'}
+PASS reject null clothing | AssertionError: $.observations[0].appearance.clothing wrong native type
+PASS reject empty clothing | AssertionError: $.observations[0].appearance.clothing minLength
+PASS reject whitespace clothing | AssertionError: unobserved/empty clothing
+PASS reject integer calibrated | AssertionError: $.observations[0].confidence.calibrated wrong native type
+PASS reject unavailable calibrated true | AssertionError: 
+PASS reject unavailable numeric value | AssertionError: 
+PASS reject missing estimate value | AssertionError: 
+PASS reject bool estimate | AssertionError: $.observations[0].confidence.value wrong native type
+PASS reject out-of-range estimate | AssertionError: 
+PASS reject unknown calibration evidence | KeyError: 'model-self-asserted'
+PASS reject model calibration mismatch | AssertionError: 
+PASS reject real mode offline | AssertionError: $.source.component_mode wrong enum
+PASS reject prompt hash mismatch | AssertionError: 
+PASS reject missing observations | AssertionError: $ missing keys
+PASS reject null observations | AssertionError: $.observations wrong native type
+PASS reject foreign object | AssertionError: 
+PASS reject nested private unknown | AssertionError: $.observations[0].appearance unknown keys {'hair'}
+PASS reject canonical identity | AssertionError: $.observations[0] unknown keys {'canonical_id'}
+PASS reject C2 raw hash mismatch | AssertionError: 
+PASS reject old Sidecar generation | AssertionError: sidecar identity
+PASS reject nonzero exit with success result | AssertionError: success with nonzero process exit
+PASS reject result unknown detail | AssertionError: $ unknown keys {'detail'}
+PASS reject duplicate JSON key | ValueError: duplicate key: x
+PASS reject nonfinite JSON | ValueError: nonfinite NaN
+PASS source stage run loop is exactly (1,2) | accepted
+PASS nine checkout Git states and diffs preserved | accepted
+TOTAL 75 passed; 0 failed
+PASS official final ordered messages exact canonical bytes | accepted
+PASS prompt hash reproducible | accepted
+PASS canonical JSON has no BOM or added formatting whitespace | accepted
+PASS input key insertion order cannot change canonical role/content order | accepted
+PASS message order changes hash | accepted
+PASS role participates in hash | accepted
+PASS final content replacement participates in hash | accepted
+PASS trimming changes hash and is forbidden | accepted
+PASS invalid Unicode rejected | UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800' in position 0: surrogates not allowed
+PASS unknown message key rejected | AssertionError: 
+PASS NaN message rejected | AssertionError: 
+PASS non-text multimodal content unsupported | AssertionError: 
+PASS empty message list rejected | AssertionError: 
+PASS attachment raw hash and ordered-message association | accepted
+PASS Sidecar final message hash Clothing observed | accepted
+PASS Sidecar final message hash Clothing unobserved | accepted
+PASS Sidecar final message hash Appearance empty | accepted
+PASS Sidecar final message hash Confidence unavailable | accepted
+PASS Sidecar final message hash Confidence model_estimate | accepted
+PASS Sidecar final message hash Uncalibrated estimate pending independent M5 evidence | accepted
+PASS Sidecar final message hash Empty observations | accepted
+PASS no accepted calibrated=true fixture before M5 registry | accepted
+PASS model assertion calibrated=true alone rejected | AssertionError: 
+PASS toy calibration cannot bypass incomplete M5 registry | AssertionError: 
+PASS official OCR/VLM Schema views equal internal validator contracts | accepted
+PASS official WORKER_RESULT_SCHEMA.json equals validated structural contract | accepted
+PASS official SIDECAR_SCHEMA.json equals validated structural contract | accepted
+PASS reference initial Attempt1 reserved before dispatch | accepted
+PASS reference exactly one legitimate retry | accepted
+PASS reference third attempt rejected | AssertionError: stage maximum two total attempts
+PASS reference supervisor restart serialization preserves count | accepted
+PASS reference third rejected after serialized restart | AssertionError: stage maximum two total attempts
+PASS reference reserved process crash consumes attempt and blocks blind retry | AssertionError: unresolved predecessor
+PASS reference duplicate entry cannot reset maximum | AssertionError: stage maximum two total attempts
+PASS reference stale concurrent reservation version rejected | AssertionError: stale concurrent reservation
+PASS reference same attempt id rejected | AssertionError: 
+PASS reference same fencing token rejected | AssertionError: 
+PASS reference unknown retains consumed attempt and rejects resubmit | AssertionError: unresolved predecessor
+PASS reference OCR and VLM counted separately | accepted
+PASS formal retry timeout after termination | accepted
+PASS formal retry timeout before termination | accepted
+PASS formal retry typed cancellation | accepted
+PASS formal retry transient 2004 without exact identifier | accepted
+PASS formal retry invented 2004 identifier | accepted
+PASS formal retry 9001 | accepted
+PASS formal retry 3004 | accepted
+PASS formal retry 3001 OCR special nonretry | accepted
+PASS formal retry second total attempt exhausted | accepted
+PASS formal retry cancelled fences | accepted
+PASS formal retry safety 2001 | accepted
+PASS source range regenerated and hash matches IDENTITY | accepted
+PASS source range regenerated and hash matches REQUEST | accepted
+PASS source range regenerated and hash matches RETRY | accepted
+PASS source range regenerated and hash matches RETRY_PREDICATE | accepted
+PASS source range regenerated and hash matches CANCEL | accepted
+PASS source range regenerated and hash matches FENCES | accepted
+PASS source range regenerated and hash matches BOUND_C1 | accepted
+PASS source range regenerated and hash matches GATE | accepted
+PASS source range regenerated and hash matches SIDECAR | accepted
+PASS source range regenerated and hash matches PATH | accepted
+PASS source range regenerated and hash matches JSON | accepted
+PASS source range regenerated and hash matches SPEC | accepted
+PASS source range regenerated and hash matches LIMIT | accepted
+PASS source range regenerated and hash matches PIPELINE | accepted
+PASS source range regenerated and hash matches PUBLISH | accepted
+PASS source range regenerated and hash matches LEASE_ENTRY | accepted
+PASS source range regenerated and hash matches LEASE_RUN | accepted
+PASS source range regenerated and hash matches JOB_STATE | accepted
+PASS source range regenerated and hash matches RUNNER | accepted
+PASS source range regenerated and hash matches UNKNOWN | accepted
+PASS source range regenerated and hash matches LOOKUP | accepted
+PASS source range regenerated and hash matches LEASE_TEST | accepted
+PASS source range regenerated and hash matches FIXTURE_ARGV | accepted
+PASS source range regenerated and hash matches FIXTURE | accepted
+PASS source range regenerated and hash matches PUBLIC_OCR | accepted
+PASS source range regenerated and hash matches PUBLIC_VLM | accepted
+PASS source range regenerated and hash matches API_OVERVIEW | accepted
+PASS source range regenerated and hash matches API_RETRY | accepted
+PASS source range regenerated and hash matches M2_ENTRY | accepted
+PASS source range regenerated and hash matches M2_PROMPT | accepted
+PASS source range regenerated and hash matches M2_C1_PATH | accepted
+PASS source range regenerated and hash matches M2_BINDING | accepted
+PASS source range regenerated and hash matches M2_REQUEST | accepted
+PASS source range regenerated and hash matches M2_REFS | accepted
+PASS source range regenerated and hash matches M2_FACTORY | accepted
+PASS source range regenerated and hash matches M2_RENDER | accepted
+PASS source range regenerated and hash matches M2_HISTORY | accepted
+PASS source range regenerated and hash matches M2_ENVELOPE | accepted
+PASS source range regenerated and hash matches M2_IDENTITY | accepted
+PASS source range regenerated and hash matches M2_OUTPUTS | accepted
+PASS source range regenerated and hash matches M2_FINISH | accepted
+PASS source range regenerated and hash matches APPROVAL | accepted
+PASS Profile B exact pairing and A remains independently blocked | accepted
+OFFICIAL TOTAL 93 passed; 0 failed

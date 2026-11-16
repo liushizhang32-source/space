@@ -1,0 +1,13 @@
+{
+  "identity": {
+    "job_id": "job-offline-example",
+    "page_id": "book01_p03",
+    "generation_id": "generation-fixture-1",
+    "input_revision": 1,
+    "epoch": 1,
+    "attempt_id": "ocr-attempt-fixture-1",
+    "fencing_token": "ocr-token-fixture-1"
+  },
+  "sha256": "acd80ad3f6c82b7500ba9c3364a52c02451b98ccc869376bae94097976a60829",
+  "image_sha256": "c369baf1451f6e07dc87da1e46af4b368f3e43360c2893c531ae648dadba5984"
+}

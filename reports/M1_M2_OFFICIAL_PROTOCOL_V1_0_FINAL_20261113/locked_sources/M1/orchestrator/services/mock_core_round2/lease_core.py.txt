@@ -1,0 +1,316 @@
+"""LEASE-001 opt-in candidate. Existing round2 and v01 stay byte-identical.
+
+Supervisor events are trusted local management evidence, never worker receipts.
+Fresh databases only; an existing round2 database is not silently migrated.
+"""
+from dataclasses import asdict
+from pathlib import Path
+import sqlite3
+import hashlib
+import json
+import uuid
+
+from .core import Core as Round2Core, encoded, Identity
+
+
+class Core(Round2Core):
+    def __init__(self, database, *, clock=None):
+        path = Path(database).resolve()
+        if path.exists():
+            with sqlite3.connect(path.as_uri() + '?mode=ro', uri=True) as db:
+                if not db.execute("SELECT 1 FROM sqlite_master WHERE name='lease001'").fetchone():
+                    raise ValueError('LEASE-001 requires a fresh candidate database')
+        super().__init__(database, clock=clock)
+        self.db.execute('''CREATE TABLE IF NOT EXISTS lease001(
+            attempt TEXT PRIMARY KEY REFERENCES executions(id), owner TEXT NOT NULL,
+            resource TEXT NOT NULL, state TEXT NOT NULL, reason TEXT,
+            no_dispatch INTEGER NOT NULL DEFAULT 0)''')
+        self.db.executescript('''
+            CREATE TABLE IF NOT EXISTS lease002_submissions(
+                lease_id TEXT PRIMARY KEY, job TEXT NOT NULL REFERENCES jobs(id),
+                owner TEXT NOT NULL, idem TEXT NOT NULL, state TEXT NOT NULL,
+                resource TEXT UNIQUE, reason TEXT);
+            CREATE UNIQUE INDEX IF NOT EXISTS lease002_active_job
+                ON lease002_submissions(job) WHERE resource IS NOT NULL;
+        ''')
+        try:
+            self._verify_submission_leases()
+        except BaseException:
+            self.close()
+            raise
+
+
+    def register_execution(self, identity, stage, *, scope='local_mock_tree', resource='vision-fixture'):
+        identity = asdict(identity) if isinstance(identity, Identity) else identity
+        with self.transaction():
+            j = self.get(identity['job_id'])
+            self.check(j, identity['generation_id'], identity['epoch'])
+            expected = self.control(j)
+            if (set(identity) != set(expected)
+                    or any(type(identity[k]) is not type(v) for k, v in expected.items())
+                    or identity['page_id'] != j['page_id'] or identity['input_revision'] != j['revision']
+                    or not identity['attempt_id'] or not identity['fencing_token']):
+                raise ValueError('invalid execution owner')
+            if scope not in {'local_mock_tree', 'external_mock'} or not resource:
+                raise ValueError('explicit mock scope/resource required')
+            owner = encoded(identity)
+            self.db.execute('INSERT INTO executions(id,job,identity,stage,scope,resource) VALUES(?,?,?,?,?,?)',
+                            (identity['attempt_id'], j['job_id'], owner, stage, scope, resource))
+            self.db.execute('INSERT INTO lease001(attempt,owner,resource,state) VALUES(?,?,?,?)',
+                            (identity['attempt_id'], owner, resource, 'lease_acquired'))
+            j['callback_identity'] = identity
+            self.save(j, 'lease_acquired')
+
+    def lease(self, identity):
+        with self.mutex:
+            row = self.db.execute('SELECT * FROM lease001 WHERE attempt=?', (identity['attempt_id'],)).fetchone()
+            if not row or row['owner'] != encoded(identity):
+                raise ValueError('lease owner mismatch')
+            return dict(row)
+
+    def observe_execution(self, identity, event):
+        kind = event['event']
+        with self.transaction():
+            lease = self.lease(identity)
+            row = self.db.execute('SELECT * FROM executions WHERE id=?', (identity['attempt_id'],)).fetchone()
+            state = lease['state']
+            if state == 'lease_released':
+                # A replay is audit-only: never update any resource by name.
+                self.event(row['job'], 'lease_replay_ignored_' + kind)
+                return
+            if kind == 'worker_starting':
+                if state != 'lease_acquired':
+                    raise ValueError('illegal start transition')
+                self.db.execute("UPDATE lease001 SET state='worker_starting' WHERE attempt=?", (row['id'],))
+            elif kind == 'started':
+                if state != 'worker_starting':
+                    raise ValueError('start without dispatch barrier')
+                self.db.execute("UPDATE lease001 SET state='worker_started' WHERE attempt=?", (row['id'],))
+            elif kind == 'launch_not_dispatched':
+                if (state not in {'lease_acquired', 'worker_starting', 'launch_not_dispatched'} or row['worker_exited']
+                        or event.get('proof') != 'local-launcher/no-process-created'
+                        or not isinstance(event.get('reason'), str) or not event['reason']):
+                    raise ValueError('missing trusted no-dispatch evidence')
+                # This is NOT worker exit and NOT backend termination proof.
+                self.db.execute("UPDATE lease001 SET state='launch_not_dispatched',no_dispatch=1,reason=? WHERE attempt=?",
+                                (event['reason'], row['id']))
+            elif kind == 'launch_uncertain':
+                self.db.execute("UPDATE lease001 SET state='reconciliation_required',reason=? WHERE attempt=?",
+                                (event.get('reason', 'launch outcome unknown'), row['id']))
+            elif kind == 'cleaned' and lease['no_dispatch']:
+                self.db.execute('UPDATE executions SET cleanup_observed=1,cleaned=1,resource=NULL WHERE id=?', (row['id'],))
+                self.db.execute("UPDATE lease001 SET state='lease_released' WHERE attempt=?", (row['id'],))
+                self.event(row['job'], 'lease_released_no_dispatch')
+            elif kind == 'cleaned' and not row['worker_exited']:
+                # Cleaning files supplies no evidence about an uncertain child.
+                self.db.execute('UPDATE executions SET cleanup_observed=1 WHERE id=?', (row['id'],))
+                self.db.execute("UPDATE lease001 SET state='reconciliation_required' WHERE attempt=?", (row['id'],))
+            else:
+                # Inline base evidence operations to keep receipt + release in one transaction.
+                if kind == 'reaped':
+                    if lease['no_dispatch']:
+                        raise ValueError('contradictory process exit after no-dispatch proof')
+                    if (type(event.get('active')) is not int or event['active'] != 0
+                            or not event.get('member_exit_witness')
+                            or not all(v is True for v in event['member_exit_witness'].values())):
+                        raise ValueError('missing actual process-tree exit proof')
+                    self.db.execute('UPDATE executions SET worker_exited=1,local_terminal_confirmed=? WHERE id=?',
+                                    (int(row['scope'] == 'local_mock_tree'), row['id']))
+                    self.db.execute("UPDATE lease001 SET state='local_terminal_confirmed' WHERE attempt=?", (row['id'],))
+                elif kind == 'cleaned':
+                    terminal = row['local_terminal_confirmed'] or row['backend_terminal_confirmed']
+                    self.db.execute('UPDATE executions SET cleanup_observed=1,cleaned=?,resource=CASE WHEN ? THEN NULL ELSE resource END WHERE id=?',
+                                    (int(bool(terminal)), int(bool(terminal)), row['id']))
+                    if terminal:
+                        self.db.execute("UPDATE lease001 SET state='lease_released' WHERE attempt=?", (row['id'],))
+            self.event(row['job'], 'lease_' + kind)
+
+    def confirm_external_mock(self, identity, proof):
+        if (proof != {'mode': 'mock', 'identity': identity, 'terminal': True}
+                or type(proof.get('terminal')) is not bool):
+            raise ValueError('mock backend receipt mismatch')
+        with self.transaction():
+            lease = self.lease(identity)
+            row = self.db.execute('SELECT * FROM executions WHERE id=?', (identity['attempt_id'],)).fetchone()
+            if row['scope'] != 'external_mock' or row['identity'] != encoded(proof['identity']):
+                raise ValueError('wrong backend execution')
+            if lease['state'] == 'lease_released':
+                return
+            cleaned = bool(row['worker_exited'] and row['cleanup_observed'])
+            self.db.execute('UPDATE executions SET backend_terminal_confirmed=1,cleaned=?,resource=CASE WHEN ? THEN NULL ELSE resource END WHERE id=?',
+                            (int(cleaned), int(cleaned), row['id']))
+            self.db.execute('UPDATE lease001 SET state=? WHERE attempt=?',
+                            ('lease_released' if cleaned else 'backend_terminal_confirmed', row['id']))
+            self.event(row['job'], 'lease_FAKE_backend_terminal_confirmed')
+
+    def unresolved(self, jid):
+        return (self.db.execute('SELECT 1 FROM executions WHERE job=? AND cleaned=0', (jid,)).fetchone()
+                or self.db.execute("SELECT 1 FROM submissions WHERE job=? AND backend_terminal_confirmed=0 AND state!='not_submitted'", (jid,)).fetchone())
+
+    def recover(self):
+        if self.recovered:
+            return super().recover()
+        jobs = super().recover()
+        if self.db.execute("SELECT 1 FROM sqlite_master WHERE name='lease001'").fetchone():
+            with self.transaction():
+                # Acquired but no durable no-dispatch receipt is also uncertain after death.
+                self.db.execute("UPDATE lease001 SET state='reconciliation_required' WHERE state!='lease_released' AND no_dispatch=0")
+        if self.db.execute("SELECT 1 FROM sqlite_master WHERE name='lease002_submissions'").fetchone():
+            with self.transaction():
+                self.db.execute("UPDATE lease002_submissions SET state='unknown',reason='scheduler_restart' WHERE state='submitting'")
+        return jobs
+
+    SUBMISSION_RESOURCE = 'deterministic-mock-provider'
+
+    def _verify_submission_leases(self):
+        # Refuse legacy unprotected unknowns/corrupt ownership, never adopt them.
+        bad = self.db.execute("""SELECT 1 FROM submissions s
+            LEFT JOIN lease002_submissions l ON l.job=s.job AND l.owner=s.identity
+              AND l.idem=s.idem AND l.resource=s.resource AND l.state=s.state
+            WHERE s.state IN ('intent','submitting','unknown')
+              AND (s.resource IS NULL OR s.resource!=? OR l.lease_id IS NULL)
+            UNION ALL SELECT 1 FROM lease002_submissions l
+            LEFT JOIN submissions s ON l.job=s.job AND l.owner=s.identity
+              AND l.idem=s.idem AND l.resource=s.resource AND l.state=s.state
+            WHERE l.resource IS NOT NULL AND s.job IS NULL LIMIT 1""",
+            (self.SUBMISSION_RESOURCE,)).fetchone()
+        if bad:
+            raise ValueError('LEASE-002 inconsistent durable submission lease; separate reviewed recovery required')
+
+    def submission_lease(self, identity, lease_id):
+        """Trusted local inspection/reconciliation; never an HTTP callback."""
+        with self.mutex:
+            row = self.db.execute('SELECT * FROM lease002_submissions WHERE lease_id=?', (lease_id,)).fetchone()
+            if not row or row['owner'] != encoded(identity):
+                raise ValueError('submission lease owner mismatch')
+            return dict(row)
+
+    def _finish_submission(self, lease, receipt):
+        if (type(receipt) is not dict or receipt.get('mode') != 'mock'
+                or receipt.get('key') != lease['idem'] or receipt.get('terminal') is not True
+                or type(receipt.get('task_ref')) is not str or not receipt['task_ref']):
+            raise ValueError('submit_unknown; missing trusted mock terminal receipt')
+        with self.transaction():
+            current = self.db.execute('SELECT * FROM lease002_submissions WHERE lease_id=?', (lease['lease_id'],)).fetchone()
+            if not current or current['owner'] != lease['owner'] or current['idem'] != lease['idem']:
+                raise ValueError('submission lease owner mismatch')
+            if current['state'] == 'confirmed':
+                return receipt['task_ref']  # Historical replay never touches a newer lease.
+            if current['state'] not in {'submitting', 'unknown'} or current['resource'] != self.SUBMISSION_RESOURCE:
+                raise ValueError('submit_unknown; no active submitted lease')
+            changed = self.db.execute("UPDATE submissions SET state='confirmed',task_ref=?,client_exited=1,backend_terminal_confirmed=1,resource=NULL WHERE job=? AND identity=? AND idem=? AND resource=? AND state IN ('submitting','unknown')",
+                (receipt['task_ref'], lease['job'], lease['owner'], lease['idem'], self.SUBMISSION_RESOURCE)).rowcount
+            if changed != 1:
+                raise ValueError('submit_unknown; submission ownership changed')
+            self.db.execute("UPDATE lease002_submissions SET state='confirmed',resource=NULL,reason='FAKE_terminal_lookup_or_receipt' WHERE lease_id=? AND owner=?",
+                            (lease['lease_id'], lease['owner']))
+            self.event(lease['job'], 'lease002_FAKE_terminal_reconciled_' + lease['lease_id'])
+        return receipt['task_ref']
+
+    def reconcile_submission(self, identity, provider, *, lease_id):
+        """Exact historical owner + lease ID; lookup only, no backend dispatch."""
+        from .provider import FakeProvider
+        if type(provider) is not FakeProvider:
+            raise ValueError('only local deterministic fake provider allowed')
+        lease = self.submission_lease(identity, lease_id)
+        if lease['state'] in {'not_submitted', 'confirmed'}:
+            return None  # Idempotent old receipt cannot release any current resource.
+        if lease['state'] not in {'submitting', 'unknown'}:
+            raise ValueError('submit_unknown; no submitted attempt to reconcile')
+        receipt = provider.lookup(lease['idem']) if provider.supports_lookup else None
+        if receipt is None:
+            with self.transaction():
+                self.event(lease['job'], 'lease002_lookup_unresolved_' + lease_id)
+            raise ValueError('submit_unknown; trusted lookup required before recovery')
+        return self._finish_submission(lease, receipt)
+
+    def _prepare_submission(self, identity):
+        """Resource UNIQUE, owner and intent commit together before dispatch."""
+        try:
+            with self.transaction():
+                job = self.get(identity['job_id']); self.live(job, identity)
+                row = self.db.execute('SELECT * FROM submissions WHERE job=?', (identity['job_id'],)).fetchone()
+                if row and row['state'] == 'confirmed':
+                    return dict(row), None
+                if row and row['state'] not in {'not_submitted', 'intent', 'submitting', 'unknown'}:
+                    raise ValueError('unsupported submission state')
+                if row is None or row['state'] == 'not_submitted':
+                    key = row['idem'] if row else hashlib.sha256(encoded([job['scope'], job['page_id'], job['revision'], job['generation_id'], job['semantic']]).encode()).hexdigest()
+                    lease_id = uuid.uuid4().hex
+                    owner = encoded(identity)
+                    self.db.execute("INSERT INTO lease002_submissions VALUES(?,?,?,?,?,?,NULL)",
+                        (lease_id, job['job_id'], owner, key, 'intent', self.SUBMISSION_RESOURCE))
+                    if row is None:
+                        self.db.execute('INSERT INTO submissions(job,identity,idem,state,resource) VALUES(?,?,?,?,?)',
+                            (job['job_id'], owner, key, 'intent', self.SUBMISSION_RESOURCE))
+                    else:
+                        self.db.execute("UPDATE submissions SET identity=?,state='intent',resource=?,task_ref=NULL,client_exited=0,backend_terminal_confirmed=0 WHERE job=? AND state='not_submitted'",
+                            (owner, self.SUBMISSION_RESOURCE, job['job_id']))
+                    self.event(job['job_id'], 'lease002_acquired_intent_' + lease_id)
+                    row = self.db.execute('SELECT * FROM submissions WHERE job=?', (job['job_id'],)).fetchone()
+                lease = self.db.execute('SELECT * FROM lease002_submissions WHERE job=? AND resource=?',
+                                        (job['job_id'], self.SUBMISSION_RESOURCE)).fetchone()
+                # Old LEASE-001 uncertain rows are never silently treated as protected.
+                if (not lease or lease['owner'] != row['identity'] or lease['idem'] != row['idem']
+                        or row['resource'] != self.SUBMISSION_RESOURCE or lease['state'] != row['state']):
+                    raise ValueError('submit_unknown; missing matching durable submission lease')
+                return dict(row), dict(lease)
+        except sqlite3.IntegrityError as exc:
+            # Acquisition rolled back, so not_submitted remains not_submitted.
+            busy = exc.sqlite_errorcode == sqlite3.SQLITE_CONSTRAINT_UNIQUE
+            reason = 'resource_busy' if busy else 'integrity_failure'
+            with self.transaction():
+                self.event(identity['job_id'], 'lease002_acquire_blocked_' + reason)
+            raise ValueError(('submission_resource_busy' if busy else 'submission_lease_acquisition_failed') + '; no dispatch performed') from exc
+
+    def _submit(self, identity, provider, *, fault):
+        from .provider import FakeProvider
+        if type(provider) is not FakeProvider:
+            raise ValueError('only local deterministic fake provider allowed')
+        fault('submit_before_intent')
+        row, lease = self._prepare_submission(identity)
+        if row['state'] == 'confirmed':
+            return row['task_ref']
+        if row['state'] in {'submitting', 'unknown'}:
+            # Never submit again, even with an idempotency claim.
+            return self.reconcile_submission(json.loads(lease['owner']), provider, lease_id=lease['lease_id'])
+        try:
+            fault('lease002_after_acquire')
+            fault('intent_before_dispatch')
+            with self.transaction():
+                self.live(self.get(identity['job_id']), identity)
+                active = self.submission_lease(json.loads(lease['owner']), lease['lease_id'])
+                if active['state'] != 'intent' or active['resource'] != self.SUBMISSION_RESOURCE:
+                    raise ValueError('submission lease not dispatchable')
+                changed = self.db.execute("UPDATE submissions SET state='submitting' WHERE job=? AND identity=? AND resource=? AND state='intent'",
+                    (lease['job'], lease['owner'], self.SUBMISSION_RESOURCE)).rowcount
+                if changed != 1:
+                    raise ValueError('submission ownership changed before dispatch')
+                self.db.execute("UPDATE lease002_submissions SET state='submitting' WHERE lease_id=?", (lease['lease_id'],))
+                self.event(lease['job'], 'lease002_dispatch_barrier_' + lease['lease_id'])
+            fault('lease002_before_request')
+            receipt = provider.submit(row['idem'])
+            fault('provider_after_submit_before_record')
+            result = self._finish_submission(lease, receipt)
+        except BaseException as exc:
+            uncertain = False
+            with self.transaction():
+                active = self.db.execute('SELECT * FROM lease002_submissions WHERE lease_id=? AND owner=?',
+                                         (lease['lease_id'], lease['owner'])).fetchone()
+                if active and active['state'] == 'intent' and isinstance(exc, Exception):
+                    # Dispatch barrier was never crossed: safe no-request proof.
+                    self.db.execute("UPDATE submissions SET state='not_submitted',resource=NULL WHERE job=? AND identity=? AND state='intent'",
+                                    (lease['job'], lease['owner']))
+                    self.db.execute("UPDATE lease002_submissions SET state='not_submitted',resource=NULL,reason=? WHERE lease_id=?",
+                                    ('no_dispatch_' + type(exc).__name__, lease['lease_id']))
+                elif active and active['state'] in {'submitting', 'unknown'}:
+                    self.db.execute("UPDATE submissions SET state='unknown' WHERE job=? AND identity=? AND state='submitting'", (lease['job'], lease['owner']))
+                    self.db.execute("UPDATE lease002_submissions SET state='unknown',reason=? WHERE lease_id=?",
+                                    ('dispatch_outcome_' + type(exc).__name__, lease['lease_id']))
+                    uncertain = True
+                self.event(lease['job'], 'lease002_exception_' + type(exc).__name__ + '_' + lease['lease_id'])
+            if uncertain and isinstance(exc, Exception):
+                raise ValueError('submit_unknown; reconciliation required') from exc
+            raise
+        fault('recorded_before_return')
+        return result
