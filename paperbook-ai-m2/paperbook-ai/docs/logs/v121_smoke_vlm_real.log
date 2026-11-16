@@ -1,0 +1,94 @@
+[V1.2.1 真实 VLM 冒烟] 2026-11-11 22:40:39
+command: VISION_VLM_BACKEND=http QWEN_VL_MODEL=qwen2.5vl:3b QWEN_VL_TIMEOUT=25 python scripts/m2_vision_worker.py request.json
+cwd: .tmp\smoke2_vlm (attempt 私有目录)
+inputs: c1=json/smoke01_p01_ocr.json + c1_sha256 + image_sha256
+exit=0 wall=8.37s
+c2: {
+  "schema_version": "1.0",
+  "book_id": "smoke01",
+  "page_id": "smoke01_p01",
+  "page_no": 1,
+  "status": "ok",
+  "image_width": 1000,
+  "image_height": 1414,
+  "description": "小兔子在树下遇到小鸟和蘑菇，也想吃胡萝卜。",
+  "objects": [
+    {
+      "object_id": "smoke01_p01_o01",
+      "label": "树",
+      "bbox": [
+        64,
+        420,
+        280,
+        1273
+      ],
+      "confidence": 0.0
+    }
+  ],
+  "scene_tags": [
+    "小兔子",
+    "小鸟",
+    "蘑菇",
+    "胡萝卜",
+    "树",
+    "天空"
+  ],
+  "safety": {
+    "pass": true,
+    "flags": []
+  },
+  "elapsed_ms": 7896
+}
+
+sidecar: {
+  "schema_version": "vision_refs/0.1",
+  "contract_status": "candidate",
+  "identity": {
+    "job_id": "job_smoke_v121",
+    "page_id": "smoke01_p01",
+    "generation_id": "gen_smoke_v121",
+    "input_revision": 1,
+    "epoch": 1,
+    "attempt_id": "att_smoke_v121",
+    "fencing_token": "tok_smoke_v121"
+  },
+  "c2": {
+    "asset_id": "smoke01_p01_vlm",
+    "schema_version": "1.0",
+    "relative_path": "json/smoke01_p01_vlm.json",
+    "sha256": "9b922d64b755accfca615ca07677a49e2728a300c96a26412fb093d282f002ba"
+  },
+  "source": {
+    "component_mode": "real",
+    "model_ref": "qwen2.5vl:3b",
+    "prompt_sha256": "7525201ff05548ecb4c00869dee0b7e71d6c80365a2194ce016dc0a7266b9819",
+    "evidence_ref": "json/smoke01_p01_vlm.json"
+  },
+  "observations": [
+    {
+      "observation_id": "obs_001",
+      "object_id": "smoke01_p01_o01",
+      "appearance": {
+        "clothing": null,
+        "visible_features": []
+      },
+      "visual_description": "树",
+      "confidence": {
+        "value": 0.0,
+        "kind": "model_estimate",
+        "calibrated": false
+      },
+      "identity_status": "unknown",
+      "source_ref": "json/smoke01_p01_vlm.json#/objects/0"
+    }
+  ],
+  "c1_sha256": "00925cbd1e5af51bec14ec2399908d2349d063ec9d714444aa5ab9b46c020e17",
+  "job_id": "job_smoke_v121",
+  "page_id": "smoke01_p01",
+  "generation_id": "gen_smoke_v121",
+  "input_revision": 1,
+  "epoch": 1,
+  "attempt_id": "att_smoke_v121",
+  "fencing_token": "tok_smoke_v121"
+}
+

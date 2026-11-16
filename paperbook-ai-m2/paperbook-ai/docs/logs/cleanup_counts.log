@@ -1,0 +1,8 @@
+[正常]
+  round1: exit=0 before=0 after=0 delta=0
+  round2: exit=0 before=0 after=0 delta=0
+  round3: exit=0 before=0 after=0 delta=0
+[异常：print 抛 ValueError]
+  round1: raised=ValueError before=0 after=0 delta=0
+  round2: raised=ValueError before=0 after=0 delta=0
+  round3: raised=ValueError before=0 after=0 delta=0
