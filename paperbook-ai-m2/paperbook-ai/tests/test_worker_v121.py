@@ -198,12 +198,12 @@ def test_symlinked_output_is_rejected():
         request = _vlm_request(tmp)
         real = tmp / "real.json"
         real.write_text("{}", encoding="utf-8")
-        link = tmp / "link.json"
+        link = tmp / "json" / "book01_p01_vlm.json"
+        link.parent.mkdir(parents=True, exist_ok=True)
         try:
             os.symlink(real, link)
         except (OSError, NotImplementedError):  # Windows 无权限时跳过
             return
-        request["outputs"]["c2"] = "link.json"
         envelope, code = worker.process_request(request, cwd=tmp, vlm_backend=_Vlm(_ok_result()))
         assert code == 2, envelope
         assert "符号链接" in envelope["msg"]

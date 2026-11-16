@@ -6,9 +6,12 @@
 from __future__ import annotations
 
 import json
+import tempfile
 from pathlib import Path
 
 from vision import protocol, refs
+
+_ABS = str(Path(tempfile.gettempdir()).resolve() / "m1-offline-fixture")
 
 IDENTITY = dict(
     job_id="job_p1",
@@ -25,7 +28,7 @@ def _ocr_request(**over):
     doc = {
         "protocol": protocol.PROTOCOL,
         "stage": "ocr",
-        "image_path": "C:/m1-offline/attempt-ocr-001/input.bin",
+        "image_path": str(Path(_ABS) / "attempt-ocr-001" / "input.bin"),
         "image_sha256": "a" * 64,
         "result_path": "result.json",
         "outputs": protocol.canonical_outputs("book01_p03"),
@@ -37,7 +40,7 @@ def _ocr_request(**over):
 
 def _vlm_request():
     doc = _ocr_request(stage="vlm")
-    doc["inputs"] = {"c1": "C:/m1-offline/attempt-vlm-001/c1.json"}
+    doc["inputs"] = {"c1": str(Path(_ABS) / "attempt-vlm-001" / "c1.json")}
     doc["c1_binding"] = {
         "identity": {**IDENTITY, "page_id": "book01_p03", "attempt_id": "ocr-attempt-1",
                      "fencing_token": "ocr-token-1"},
