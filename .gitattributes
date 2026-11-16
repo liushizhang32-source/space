@@ -1,0 +1,4 @@
+# Preserve evidence hashes and patch payload bytes across Windows checkouts.
+docs/m1-generation-integration-v2/* -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+# Unified diff context lines contain a required leading space, including blanks.
+docs/m1-generation-integration-v2/*.patch -whitespace

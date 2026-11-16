@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from agents.generation.schemas import StoryDoc, export_json_schemas
+from orchestrator.vendor.member3_v116.agents.generation.schemas import StoryDoc, export_json_schemas
 
 ROOT = Path(__file__).resolve().parents[1]
 

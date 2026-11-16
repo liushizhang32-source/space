@@ -15,7 +15,7 @@ from orchestrator.services.jobs import Jobs
 from orchestrator.services.storage import Storage
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, *, m1_session_factory=None) -> FastAPI:
     settings = settings or Settings()
     storage = Storage(settings)
     if settings.generation_backend == 'member3':
@@ -26,7 +26,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app):
-        app.state.jobs = jobs_class(storage)
+        app.state.jobs = (jobs_class(storage, m1_session_factory=m1_session_factory)
+                          if m1_session_factory is not None and settings.generation_backend == 'member3'
+                          else jobs_class(storage))
         yield
         await app.state.jobs.close()
 

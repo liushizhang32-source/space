@@ -4,7 +4,7 @@ import re
 
 import pytest
 
-from agents.generation.ids import (
+from orchestrator.vendor.member3_v116.agents.generation.ids import (
     book_id_of,
     is_page_id,
     make_page_id,

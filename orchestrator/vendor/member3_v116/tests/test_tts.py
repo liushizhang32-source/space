@@ -7,12 +7,12 @@ from pathlib import Path
 import pytest
 from fastapi import FastAPI
 
-from agents.generation.config import Settings
-from agents.generation.errors import AppError, ErrorCode, TTSFailed, TTSUnavailable
-from agents.generation.tts.api import TTSRequest, synthesize_tts
-from agents.generation.tts.client import TTSClient
-from agents.generation.tts.engine import estimate_duration_sec
-from agents.generation.tts.service import create_app
+from orchestrator.vendor.member3_v116.agents.generation.config import Settings
+from orchestrator.vendor.member3_v116.agents.generation.errors import AppError, ErrorCode, TTSFailed, TTSUnavailable
+from orchestrator.vendor.member3_v116.agents.generation.tts.api import TTSRequest, synthesize_tts
+from orchestrator.vendor.member3_v116.agents.generation.tts.client import TTSClient
+from orchestrator.vendor.member3_v116.agents.generation.tts.engine import estimate_duration_sec
+from orchestrator.vendor.member3_v116.agents.generation.tts.service import create_app
 
 
 class FailingEngine:

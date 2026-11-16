@@ -8,15 +8,15 @@ from pathlib import Path
 
 import pytest
 
-from agents.generation.config import Settings
-from agents.generation.errors import AppError, ErrorCode, TTSFailed, TTSUnavailable, VideoError
-from agents.generation.media import AudioProbe
+from orchestrator.vendor.member3_v116.agents.generation.config import Settings
+from orchestrator.vendor.member3_v116.agents.generation.errors import AppError, ErrorCode, TTSFailed, TTSUnavailable, VideoError
+from orchestrator.vendor.member3_v116.agents.generation.media import AudioProbe
 from pydantic import ValidationError
 
-from agents.generation.schemas import StoryDoc, VideoDoc
-from agents.generation.story.builder import build_page_story
-from agents.generation.tts.engine import HttpEngine
-from agents.generation.video import compose_video
+from orchestrator.vendor.member3_v116.agents.generation.schemas import StoryDoc, VideoDoc
+from orchestrator.vendor.member3_v116.agents.generation.story.builder import build_page_story
+from orchestrator.vendor.member3_v116.agents.generation.tts.engine import HttpEngine
+from orchestrator.vendor.member3_v116.agents.generation.video import compose_video
 
 
 class FakeResponse:
@@ -130,7 +130,7 @@ def test_tts_safety_error_propagates_not_degraded(
 def test_pipeline_video_safety_is_blocked(
     media_settings: Settings, page_image, sample_ocr: dict, sample_vlm: dict, monkeypatch
 ):
-    from agents.generation import pipeline
+    from orchestrator.vendor.member3_v116.agents.generation import pipeline
 
     def boom(*args, **kwargs):
         raise AppError(ErrorCode.SAFETY_BLOCKED, "视频阶段安全拒绝")
@@ -165,7 +165,7 @@ def _debris(settings: Settings) -> list[str]:
 def test_video_json_publish_failure_restores_old_pair(
     media_settings: Settings, page_image, sample_ocr: dict, sample_vlm: dict, monkeypatch
 ):
-    import agents.generation.video as video_module
+    import orchestrator.vendor.member3_v116.agents.generation.video as video_module
 
     story = _story(media_settings, sample_ocr, sample_vlm)
     first = _compose_once(media_settings, story, page_image)
@@ -194,7 +194,7 @@ def test_video_json_publish_failure_restores_old_pair(
 def test_video_failure_without_old_pair_leaves_nothing(
     media_settings: Settings, page_image, sample_ocr: dict, sample_vlm: dict, monkeypatch
 ):
-    import agents.generation.video as video_module
+    import orchestrator.vendor.member3_v116.agents.generation.video as video_module
 
     story = _story(media_settings, sample_ocr, sample_vlm)
     real_replace = video_module.os.replace

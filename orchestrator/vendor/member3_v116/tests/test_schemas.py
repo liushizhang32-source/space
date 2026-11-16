@@ -5,7 +5,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from agents.generation.schemas import StoryDoc, VideoDoc, export_json_schemas
+from orchestrator.vendor.member3_v116.agents.generation.schemas import StoryDoc, VideoDoc, export_json_schemas
 
 
 def _story(**overrides) -> dict:

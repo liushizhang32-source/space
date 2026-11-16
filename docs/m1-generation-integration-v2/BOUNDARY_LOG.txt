@@ -1,0 +1,118 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.14, pytest-9.2.0, pluggy-1.7.0 -- C:\Users\16173\Documents\ChatGPT\人工智能+\reports\M1-M3-RUNTIME-001\test-env\Scripts\python.exe
+rootdir: C:\Users\16173\Documents\ChatGPT\人工智能+\reports\M1-M3-IMPLEMENTATION-001\ci-only-boundary
+configfile: pytest.ini
+collecting ... collected 77 items
+
+orchestrator/tests/test_m1_integration_reference.py::test_full_chain_idempotency_and_audit PASSED [  1%]
+orchestrator/tests/test_m1_integration_reference.py::test_path_denial[../secret] PASSED [  2%]
+orchestrator/tests/test_m1_integration_reference.py::test_path_denial[inputs/../secret] PASSED [  3%]
+orchestrator/tests/test_m1_integration_reference.py::test_path_denial[/inputs/c2.json] PASSED [  5%]
+orchestrator/tests/test_m1_integration_reference.py::test_path_denial[C:/x] PASSED [  6%]
+orchestrator/tests/test_m1_integration_reference.py::test_path_denial[inputs\\c2.json] PASSED [  7%]
+orchestrator/tests/test_m1_integration_reference.py::test_path_denial[inputs//c2.json] PASSED [  9%]
+orchestrator/tests/test_m1_integration_reference.py::test_path_denial[inputs/%2e%2e/secret] PASSED [ 10%]
+orchestrator/tests/test_m1_integration_reference.py::test_path_denial[inputs/c2.json.] PASSED [ 11%]
+orchestrator/tests/test_m1_integration_reference.py::test_path_denial[inputs/./c2.json] PASSED [ 12%]
+orchestrator/tests/test_m1_integration_reference.py::test_path_denial[inputs/c2.json ] PASSED [ 14%]
+orchestrator/tests/test_m1_integration_reference.py::test_grant_revoke_asset_scope_and_version PASSED [ 15%]
+orchestrator/tests/test_m1_integration_reference.py::test_service_binding_and_forgery PASSED [ 16%]
+orchestrator/tests/test_m1_integration_reference.py::test_expiry_is_persistent_after_rejection PASSED [ 18%]
+orchestrator/tests/test_m1_integration_reference.py::test_revoked_and_stale_attempt PASSED [ 19%]
+orchestrator/tests/test_m1_integration_reference.py::test_key_rotation_revoke_fail_closed PASSED [ 20%]
+orchestrator/tests/test_m1_integration_reference.py::test_concurrent_budget_no_overrun PASSED [ 22%]
+orchestrator/tests/test_m1_integration_reference.py::test_concurrent_same_request_single_hold PASSED [ 23%]
+orchestrator/tests/test_m1_integration_reference.py::test_invalid_budget_inputs[True] PASSED [ 24%]
+orchestrator/tests/test_m1_integration_reference.py::test_invalid_budget_inputs[False] PASSED [ 25%]
+orchestrator/tests/test_m1_integration_reference.py::test_invalid_budget_inputs[-1] PASSED [ 27%]
+orchestrator/tests/test_m1_integration_reference.py::test_invalid_budget_inputs[0] PASSED [ 28%]
+orchestrator/tests/test_m1_integration_reference.py::test_invalid_budget_inputs[15001] PASSED [ 29%]
+orchestrator/tests/test_m1_integration_reference.py::test_invalid_budget_inputs[1.1] PASSED [ 31%]
+orchestrator/tests/test_m1_integration_reference.py::test_invalid_budget_inputs[1000] PASSED [ 32%]
+orchestrator/tests/test_m1_integration_reference.py::test_invalid_budget_inputs[None] PASSED [ 33%]
+orchestrator/tests/test_m1_integration_reference.py::test_project_fixed_and_attempt_fencing PASSED [ 35%]
+orchestrator/tests/test_m1_integration_reference.py::test_unknown_retains_hold_across_restart_and_settles PASSED [ 36%]
+orchestrator/tests/test_m1_integration_reference.py::test_backup_restore_retains_revocation_and_rejects_old_snapshot PASSED [ 37%]
+orchestrator/tests/test_m1_integration_reference.py::test_failure_rolls_back_partial_business_writes PASSED [ 38%]
+orchestrator/tests/test_m1_integration_reference.py::test_failed_before_dispatch_releases_once PASSED [ 40%]
+orchestrator/tests/test_m1_integration_reference.py::test_bad_settlement_and_duplicate_receipt PASSED [ 41%]
+orchestrator/tests/test_m1_integration_reference.py::test_production_and_missing_state_denied PASSED [ 42%]
+orchestrator/tests/test_m1_integration_reference.py::test_real_process_crash_before_commit_rolls_back PASSED [ 44%]
+orchestrator/tests/test_m1_integration_reference.py::test_second_process_reads_durable_budget PASSED [ 45%]
+orchestrator/tests/test_m1_integration_reference.py::test_real_gate_to_generation_budget_asset_result PASSED [ 46%]
+orchestrator/tests/test_m1_integration_reference.py::test_real_gate_denial_cannot_reserve PASSED [ 48%]
+orchestrator/tests/test_m1_integration_reference.py::test_service_revocation PASSED [ 49%]
+orchestrator/tests/test_m1_integration_reference.py::test_atomic_anchor_publication_failure_blocks_reopen PASSED [ 50%]
+orchestrator/tests/test_m1_integration_reference.py::test_anchor_commit_gap_fails_closed PASSED [ 51%]
+orchestrator/tests/test_m1_integration_reference.py::test_prompt_binding_and_signed_offline_provenance PASSED [ 53%]
+orchestrator/tests/test_m1_integration_reference.py::test_no_paid_provider_can_be_selected PASSED [ 54%]
+orchestrator/tests/test_m1_integration_reference.py::test_cross_process_authorities_cannot_multiply_budget PASSED [ 55%]
+orchestrator/tests/test_m1_integration_reference.py::test_audited_denial_does_not_log_tokens PASSED [ 57%]
+orchestrator/tests/test_m1_integration_reference.py::test_mock_assets_never_enabled_in_deployed_modes[dev] FAILED [ 58%]
+orchestrator/tests/test_m1_integration_reference.py::test_mock_assets_never_enabled_in_deployed_modes[production] FAILED [ 59%]
+orchestrator/tests/test_m1_integration_reference.py::test_mock_assets_never_enabled_in_deployed_modes[unknown] FAILED [ 61%]
+orchestrator/tests/test_m1_integration_reference.py::test_deployed_blocked_mode_still_allowed[dev] FAILED [ 62%]
+orchestrator/tests/test_m1_integration_reference.py::test_deployed_blocked_mode_still_allowed[production] FAILED [ 63%]
+orchestrator/tests/test_m1_integration_reference.py::test_submitted_unbilled_attempt_cannot_be_replaced PASSED [ 64%]
+orchestrator/tests/test_m1_integration_reference.py::test_completed_submit_retry_keeps_original_result_and_single_charge PASSED [ 66%]
+orchestrator/tests/test_m1_integration_reference.py::test_retired_key_identifier_never_reused PASSED [ 67%]
+orchestrator/tests/test_m1_integration_reference.py::test_bridge_denied_service_cannot_register_assets PASSED [ 68%]
+orchestrator/tests/test_m1_integration_reference.py::test_replayed_begin_never_returns_superseded_attempt PASSED [ 70%]
+orchestrator/tests/test_m1_integration_reference.py::test_authorized_native_file_read_and_wrong_version PASSED [ 71%]
+orchestrator/tests/test_m1_integration_reference.py::test_native_files_reject_hardlinks PASSED [ 72%]
+orchestrator/tests/test_m1_integration_reference.py::test_native_files_reject_junction_ancestor PASSED [ 74%]
+orchestrator/tests/test_m1_integration_reference.py::test_native_file_reader_not_called_without_authorization PASSED [ 75%]
+orchestrator/tests/test_m1_integration_reference.py::test_native_file_rechecks_revocation_after_io PASSED [ 76%]
+orchestrator/tests/test_m1_integration_reference.py::test_native_reader_rejects_name_aliases[../secret] PASSED [ 77%]
+orchestrator/tests/test_m1_integration_reference.py::test_native_reader_rejects_name_aliases[C:/secret] PASSED [ 79%]
+orchestrator/tests/test_m1_integration_reference.py::test_native_reader_rejects_name_aliases[inputs\\c2.json] PASSED [ 80%]
+orchestrator/tests/test_m1_integration_reference.py::test_native_reader_rejects_name_aliases[inputs/c2.json:secret] PASSED [ 81%]
+orchestrator/tests/test_m1_integration_reference.py::test_native_reader_rejects_name_aliases[CON] PASSED [ 83%]
+orchestrator/tests/test_m1_integration_reference.py::test_native_reader_rejects_name_aliases[LPT1.txt] PASSED [ 84%]
+orchestrator/tests/test_m1_integration_reference.py::test_native_reader_rejects_name_aliases[nul.json] PASSED [ 85%]
+orchestrator/tests/test_m1_integration_reference.py::test_native_reader_rejects_name_aliases[a\x00b] PASSED [ 87%]
+orchestrator/tests/test_m1_integration_reference.py::test_native_file_limits_and_missing_files PASSED [ 88%]
+orchestrator/tests/test_m1_integration_reference.py::test_native_handle_denies_concurrent_write_and_replace PASSED [ 89%]
+orchestrator/tests/test_m1_integration_reference.py::test_backup_snapshot_serializes_concurrent_writer PASSED [ 90%]
+orchestrator/tests/test_m1_integration_reference.py::test_deterministic_offline_identity_and_kms_access_audit PASSED [ 92%]
+orchestrator/tests/test_m1_integration_reference.py::test_transient_windows_anchor_sharing_denial_retries_without_double_reservation PASSED [ 93%]
+orchestrator/tests/test_m1_integration_reference.py::test_native_reader_rejects_junction_above_selected_root PASSED [ 94%]
+orchestrator/tests/test_m1_integration_reference.py::test_native_reader_remains_on_pinned_root_if_ancestor_moves PASSED [ 96%]
+orchestrator/tests/test_m1_integration_reference.py::test_native_reader_rejects_network_drive_before_io PASSED [ 97%]
+orchestrator/tests/test_m1_integration_reference.py::test_native_reader_rejects_unvalidated_filesystem PASSED [ 98%]
+orchestrator/tests/test_m1_integration_reference.py::test_resigning_old_token_under_new_key_cannot_bypass_revoked_issuer PASSED [100%]
+
+================================== FAILURES ===================================
+____________ test_mock_assets_never_enabled_in_deployed_modes[dev] ____________
+orchestrator\tests\test_m1_integration_reference.py:262: in test_mock_assets_never_enabled_in_deployed_modes
+    with pytest.raises(ValueError):Settings(data_dir=tmp_path)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE ValueError
+________ test_mock_assets_never_enabled_in_deployed_modes[production] _________
+orchestrator\tests\test_m1_integration_reference.py:262: in test_mock_assets_never_enabled_in_deployed_modes
+    with pytest.raises(ValueError):Settings(data_dir=tmp_path)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE ValueError
+__________ test_mock_assets_never_enabled_in_deployed_modes[unknown] __________
+orchestrator\tests\test_m1_integration_reference.py:262: in test_mock_assets_never_enabled_in_deployed_modes
+    with pytest.raises(ValueError):Settings(data_dir=tmp_path)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE ValueError
+________________ test_deployed_blocked_mode_still_allowed[dev] ________________
+orchestrator\tests\test_m1_integration_reference.py:268: in test_deployed_blocked_mode_still_allowed
+    assert Settings(data_dir=tmp_path).asset_mode=='blocked'
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'Settings' object has no attribute 'asset_mode'
+____________ test_deployed_blocked_mode_still_allowed[production] _____________
+orchestrator\tests\test_m1_integration_reference.py:268: in test_deployed_blocked_mode_still_allowed
+    assert Settings(data_dir=tmp_path).asset_mode=='blocked'
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'Settings' object has no attribute 'asset_mode'
+- generated xml file: C:\Users\16173\Documents\ChatGPT\人工智能+\reports\M1-M3-IMPLEMENTATION-001\BOUNDARY_RESULTS.xml -
+=========================== short test summary info ===========================
+FAILED orchestrator/tests/test_m1_integration_reference.py::test_mock_assets_never_enabled_in_deployed_modes[dev]
+FAILED orchestrator/tests/test_m1_integration_reference.py::test_mock_assets_never_enabled_in_deployed_modes[production]
+FAILED orchestrator/tests/test_m1_integration_reference.py::test_mock_assets_never_enabled_in_deployed_modes[unknown]
+FAILED orchestrator/tests/test_m1_integration_reference.py::test_deployed_blocked_mode_still_allowed[dev]
+FAILED orchestrator/tests/test_m1_integration_reference.py::test_deployed_blocked_mode_still_allowed[production]
+======================== 5 failed, 72 passed in 25.51s ========================

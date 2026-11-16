@@ -5,15 +5,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from agents.generation.config import Settings
-from agents.generation.errors import VideoPublishError
-from agents.generation.pipeline import run_page
+from orchestrator.vendor.member3_v116.agents.generation.config import Settings
+from orchestrator.vendor.member3_v116.agents.generation.errors import VideoPublishError
+from orchestrator.vendor.member3_v116.agents.generation.pipeline import run_page
 
 MARKER = "MOCK_RECOVERY_BACKUP_PATH=C:/tmp/book01_p03_video.mp4.bak.1"
 
 
 def _inject_publish_error(monkeypatch):
-    import agents.generation.pipeline as pipeline
+    import orchestrator.vendor.member3_v116.agents.generation.pipeline as pipeline
 
     def boom(*args, **kwargs):
         raise VideoPublishError(

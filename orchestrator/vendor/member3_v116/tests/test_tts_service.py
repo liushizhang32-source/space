@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 
-from agents.generation.tts.service import handle_unexpected, handle_validation_error
+from orchestrator.vendor.member3_v116.agents.generation.tts.service import handle_unexpected, handle_validation_error
 
 
 def _run(handler) -> tuple[int, dict]:

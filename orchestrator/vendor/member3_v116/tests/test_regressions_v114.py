@@ -9,12 +9,12 @@ from pathlib import Path
 
 import pytest
 
-from agents.generation.config import Settings
-from agents.generation.errors import TTSFailed, VideoPublishError
-from agents.generation.storage import PageFiles
-from agents.generation.tts.client import TTSClient
-from agents.generation.tts.engine import HttpEngine
-from agents.generation.video import _publish_pair
+from orchestrator.vendor.member3_v116.agents.generation.config import Settings
+from orchestrator.vendor.member3_v116.agents.generation.errors import TTSFailed, VideoPublishError
+from orchestrator.vendor.member3_v116.agents.generation.storage import PageFiles
+from orchestrator.vendor.member3_v116.agents.generation.tts.client import TTSClient
+from orchestrator.vendor.member3_v116.agents.generation.tts.engine import HttpEngine
+from orchestrator.vendor.member3_v116.agents.generation.video import _publish_pair
 
 
 def _files(settings: Settings) -> PageFiles:
@@ -67,7 +67,7 @@ def test_backup_cleanup_failure_does_not_rollback(media_settings: Settings, monk
 
 def test_rollback_failure_keeps_recovery_backup(media_settings: Settings, monkeypatch):
     """F02：回滚恢复失败时保留备份，并报明确的 VideoPublishError。"""
-    import agents.generation.video as video_module
+    import orchestrator.vendor.member3_v116.agents.generation.video as video_module
 
     files = _files(media_settings)
     _seed_old(files)
@@ -101,7 +101,7 @@ def test_rollback_failure_keeps_recovery_backup(media_settings: Settings, monkey
 
 def test_rollback_lock_blocks_other_publisher(media_settings: Settings, monkeypatch):
     """F03：A 失败回滚期间 B 不能插入；回滚结束后 B 发布的结果不能被 A 覆盖。"""
-    import agents.generation.video as video_module
+    import orchestrator.vendor.member3_v116.agents.generation.video as video_module
 
     files = _files(media_settings)
     _seed_old(files)
