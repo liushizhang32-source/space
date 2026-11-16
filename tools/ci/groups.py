@@ -13,6 +13,9 @@ GROUPS = {
                    'orchestrator/services/member3_adapter.py']),
     'http': (12, ['orchestrator/main.py', 'orchestrator/services/member3_jobs.py',
                   'orchestrator/vendor/member3_v116/examples/book01_p03/book01_p03_orig.png']),
+    # Windows Job Objects are required by the unchanged M1 worker tests.
+    'm1-runtime': (242, ['orchestrator/tests/test_m1_integration_reference.py',
+                         'orchestrator/tests/test_m1_security_config.py']),
 }
 MEDIA = {'member134', 'enhanced', 'integration', 'http'}
 
