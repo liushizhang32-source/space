@@ -23,6 +23,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from typing import Any
 
@@ -217,7 +218,17 @@ def validate_request(request: Any) -> dict[str, Any]:
 
 
 def _is_absolute(path: str) -> bool:
-    return bool(re.match(r"^(?:[A-Za-z]:[\\/]|\\\\)", path))
+    """判断是否为**当前平台**的绝对路径。
+
+    协议只要求“绝对路径”，没有绑定 Windows 形式；CI 在 Linux 上运行时
+    ``/tmp/...`` 同样是绝对路径，不能误判为相对路径。
+    同时拒绝 Windows 的驱动器相对路径（``C:foo``）。
+    """
+    if path.startswith(("\\\\", "//")):
+        return True
+    if os.name == "nt":
+        return bool(re.match(r"^[A-Za-z]:[\\/]", path))
+    return path.startswith("/")
 
 
 def validate_result(payload: Any) -> dict[str, Any]:
