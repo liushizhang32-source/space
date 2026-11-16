@@ -141,8 +141,11 @@ def test_cross_process_instance_sees_same_current(rig):
         "'identity':json.loads(row['identity']),'status':row['status']}))\n"
     )
     env = dict(os.environ, PYTHONPATH=str(KIT_ROOT))
+    guard = os.environ.get("CI_M1_CHILD_GUARD")
+    command = ([sys.executable, guard, "m1-current"] if guard else
+               [sys.executable, "-c", script])
     proc = subprocess.run(
-        [sys.executable, "-c", script, str(rig.db_path), str(rig.anchor_path), node.page_id],
+        [*command, str(rig.db_path), str(rig.anchor_path), node.page_id],
         capture_output=True,
         text=True,
         env=env,

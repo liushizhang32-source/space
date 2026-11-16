@@ -68,7 +68,8 @@ def main():
             GENERATION_BACKEND='mock', TTS_ENGINE='silent', TTS_HTTP_URL='', TTS_API_KEY='',
             LLM_BASE_URL='', LLM_MODEL='', LLM_API_KEY='', SAFETY_ENABLED='0', SAFETY_BLOCKLIST='',
             ASSET_BASE_URL='http://127.0.0.1:8001', FFMPEG_PATH=ff, FFPROBE_PATH=probe,
-            VIDEO_FONT=os.environ.get('VIDEO_FONT', ''), VIDEO_RESOLUTION='720x1280', VIDEO_FPS='25')
+            VIDEO_FONT=os.environ.get('VIDEO_FONT', ''), VIDEO_RESOLUTION='720x1280', VIDEO_FPS='25',
+            CI_M1_CHILD_GUARD=str(CONTROL/'guard.py'))
         result['versions'] = {'python': sys.version, **{n: importlib.metadata.version(n) for n in
             ('pydantic', 'pytest', 'fastapi', 'starlette', 'httpx', 'Pillow')}}
 

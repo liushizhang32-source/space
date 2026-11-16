@@ -49,6 +49,14 @@ def audit(event, args):
                 and len(command) == 3 and Path(command[1]).resolve() == CONTROL/'guard.py'
                 and command[2] == 'server'):
             return
+        # Fixed-purpose M1 reader only; the child installs this same audit hook.
+        if (MODE == 'pytest' and executable == Path(sys.executable).resolve()
+                and len(command) == 6 and Path(command[1]).resolve() == CONTROL/'guard.py'
+                and command[2] == 'm1-current'
+                and all(writable(p) for p in command[3:5])
+                and Path(command[3]).name == 'authority.sqlite'
+                and Path(command[4]).name == 'retained.anchor'):
+            return
     if event in ('socket.connect', 'socket.connect_ex'):
         if isinstance(args[1], tuple) and args[1][0] in ('127.0.0.1', '::1'):
             return
@@ -98,6 +106,20 @@ try:
     if MODE == 'pytest':
         import pytest
         raise SystemExit(pytest.main(sys.argv))
+    elif MODE == 'm1-current':
+        # No arbitrary code/command is accepted from the caller.
+        database, anchor, page = sys.argv
+        if not all(writable(p) for p in (database, anchor)):
+            raise PermissionError('M1 reader paths outside test workspace')
+        from orchestrator.services.integration_reference import Authority, OfflineKMS
+        from orchestrator.services.vision_supervisor.shared import SharedFences
+        authority = Authority(database, anchor,
+            OfflineKMS(seed=b'm3-m1-offline-integration-fixture-seed'),
+            lambda: 1000, offline_test=True)
+        record = SharedFences(authority).restore(page)
+        row = authority.vision_snapshot(page)
+        print(json.dumps(dict(generation_id=record.generation_id, epoch=record.epoch,
+            identity=json.loads(row['identity']), status=row['status'])))
     elif MODE in ('prepare', 'http', 'server'):
         filename = {'prepare': 'prepare_fixtures.py', 'http': 'http_check.py',
                     'server': 'http_server.py'}[MODE]

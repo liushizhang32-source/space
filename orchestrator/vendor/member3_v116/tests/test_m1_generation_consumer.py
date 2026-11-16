@@ -195,11 +195,15 @@ def test_consumer_has_no_billing_surface(rig):
     assert not hasattr(consumer, "grant")
 
 
-def test_m3_story_generator_consumes_authorized_inputs(rig):
+def test_m3_story_generator_consumes_authorized_inputs(rig, settings):
     """真实 M3 故事生成器只吃 M1 授权字节，产出 C3 候选并提交。"""
     import json
 
     from agents.generation.m1_story import story_payload
+    from functools import partial
+
+    # Explicit silent TTS and test-owned paths; all original assertions remain.
+    story_payload = partial(story_payload, settings=settings)
 
     node = rig.page(3)
     consumer = rig.consumer_for(3)
