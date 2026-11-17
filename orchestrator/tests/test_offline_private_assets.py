@@ -44,6 +44,12 @@ def test_same_M1_positive_bytes_main_and_TTS(private,tmp_path):
             APIResponse[dict].model_validate(denied.json())
             assert denied.json()['trace_id']==denied.headers['X-Trace-ID']
     assert len(reader.calls)==2
+    with rig[0].tx() as db:
+        events=[json.loads(row[0]) for row in db.execute('SELECT payload FROM events')]
+    reads=[event for event in events if event['kind']=='output_read']
+    assert len(reads)==2
+    assert all(event['subject']=='M3' and event['project']=='M1' and event['job']=='req'
+               and event['asset_id']=='audio1' and event['sha256']==ref['sha256'] for event in reads)
 
 @pytest.mark.parametrize('change',['missing','project','job','subject','expired','access_revoked','service_revoked','grant_revoked','task_revoked','key_revoked'])
 def test_unauthorized_denied_before_target_open(private,tmp_path,change):

@@ -50,7 +50,7 @@ class PrivateAssets:
             old=db.execute('SELECT * FROM output_assets WHERE asset_id=?',(row['asset_id'],)).fetchone()
             require(old is None or dict(old)==row,'OUTPUT_ID_CONFLICT')
             if old is None:db.execute('INSERT INTO output_assets VALUES(?,?,?,?,?,?,?,?,?)',tuple(row.values()))
-            self.authority.event(db,'output_registered',asset_id=row['asset_id'],attempt_id=a['id'],sha256=row['hash'])
+            self.authority.event(db,'output_registered',subject=s['subject'],project=row['project'],job=row['job'],asset_id=row['asset_id'],attempt_id=a['id'],sha256=row['hash'])
         return row['asset_id']
     def issue(self,service,aid,*,project,job,ttl=60):
         offline_only(self.authority,True);asset_id(aid)
@@ -66,7 +66,7 @@ class PrivateAssets:
         row=db.execute('SELECT * FROM output_assets WHERE asset_id=?',(aid,)).fetchone()
         require(row and row['project']==project==t['project'] and row['job']==job and row['attempt']==t['attempt'],'ASSET_SCOPE')
         require(json.loads(t['assets'])=={aid:row['hash']},'ASSET_VERSION');self._current(db,row)
-        return dict(row)
+        return {**dict(row),'authorized_subject':s['subject']}
     def read(self,service,credential,aid,*,project,job):
         offline_only(self.authority,True);asset_id(aid)
         try:
@@ -76,7 +76,7 @@ class PrivateAssets:
             with self.authority.tx() as db:
                 again=self._authorize(db,service,credential,aid,project,job)
                 require(again==row,'ASSET_CHANGED')
-                self.authority.event(db,'output_read',asset_id=aid,project=project,job=job,sha256=row['hash'])
+                self.authority.event(db,'output_read',subject=row['authorized_subject'],asset_id=aid,project=project,job=job,sha256=row['hash'])
             return raw,row['mime']
         except (ValueError,TypeError,KeyError) as exc:
             with self.authority.tx() as db:self.authority.event(db,'output_denied',asset_id=aid,reason=str(exc))
