@@ -21,7 +21,7 @@ def real_http(app):
     while not server.started and thread.is_alive() and time.monotonic()<deadline:time.sleep(.01)
     assert server.started,'HTTP startup failed'
     try:
-        with httpx.Client(base_url='http://127.0.0.1:'+str(listener.getsockname()[1]),timeout=10) as client:yield client
+        with httpx.Client(base_url='http://127.0.0.1:'+str(listener.getsockname()[1]),timeout=10,trust_env=False) as client:yield client
     finally:
         server.should_exit=True;thread.join(30);listener.close();assert not thread.is_alive()
 
@@ -51,7 +51,9 @@ def test_real_socket_chain_configured_TTS_assets_restart_and_UNKNOWN(tmp_path,mo
         app=create_local_app(settings)
         image=io.BytesIO();Image.new('RGB',(96,128),'white').save(image,format='PNG')
         with real_http(app) as client:
-            assert client.post('/api/v1/capture',data={'book_id':'book01','page_no':3},files={'image':('page.png',image.getvalue(),'image/png')}).json()['code']==0
+            captured=client.post('/api/v1/capture',data={'book_id':'book01','page_no':3},files={'image':('page.png',image.getvalue(),'image/png')})
+            assert captured.headers.get('content-type','').startswith('application/json'),(captured.status_code,captured.text[:400])
+            assert captured.json()['code']==0
             jid=start(client);job=terminal(client,jid);assert job['status']=='done',job
             credentials=app.state.m1_runtime.asset_credentials(jid);assert len(credentials)>=3
             for entry in credentials:
