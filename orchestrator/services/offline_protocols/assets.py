@@ -5,6 +5,8 @@ No second signer/grant database, no untrusted path or identity in HTTP.
 import hashlib,json,re
 from fastapi import FastAPI,Request
 from starlette.responses import JSONResponse,Response
+from orchestrator.core.ids import new_id
+from orchestrator.schemas.common import APIResponse
 from ..integration_reference.authority import Denied,require,safe_name
 from ..integration_reference.files import WindowsAssetReader
 from .billing import offline_only
@@ -87,15 +89,16 @@ class PrivateAssets:
         app=FastAPI(docs_url=None,redoc_url=None,openapi_url=None)
         @app.get('/{aid}')
         async def fetch(aid:str,request:Request):
-            import uuid
+            trace=getattr(request.state,'trace_id',None) or new_id('tr')
             try:
                 header=request.headers.get('Authorization','');credential=request.headers.get('X-M1-Asset-Token','')
                 require(header.startswith('Bearer ') and len(header)<=8192 and len(credential)<=8192,'MISSING_CREDENTIAL')
                 raw,mime=self.read(header[7:],credential,aid,project=request.headers.get('X-M1-Project',''),job=request.headers.get('X-M1-Job',''))
-                return Response(raw,media_type=mime,headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'})
+                return Response(raw,media_type=mime,headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','X-Trace-ID':trace})
             except (ValueError,TypeError,KeyError) as exc:
                 try:
                     with self.authority.tx() as db:self.authority.event(db,'output_http_denied',asset_id=aid[:64],reason=type(exc).__name__)
                 except (ValueError,TypeError):pass  # Authority unavailable: still deny, never read.
-                return JSONResponse(dict(code=1005,msg='Asset access denied',data=None,trace_id='tr_'+uuid.uuid4().hex),status_code=403,headers={'Cache-Control':'no-store'})
+                payload=APIResponse[dict](code=1005,msg='Asset access denied',trace_id=trace).model_dump(mode='json')
+                return JSONResponse(payload,status_code=403,headers={'Cache-Control':'no-store','X-Trace-ID':trace})
         return app

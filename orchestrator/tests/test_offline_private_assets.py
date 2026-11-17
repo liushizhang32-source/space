@@ -8,6 +8,7 @@ from orchestrator.services.integration_reference.files import WindowsAssetReader
 from orchestrator.services.offline_protocols.assets import PrivateAssets
 from orchestrator.main import create_app
 from orchestrator.core.config import Settings
+from orchestrator.schemas.common import APIResponse
 from orchestrator.vendor.member3_v116.agents.generation.tts.service import create_app as tts_app
 from orchestrator.vendor.member3_v116.agents.generation.config import Settings as TTSSettings
 
@@ -40,6 +41,8 @@ def test_same_M1_positive_bytes_main_and_TTS(private,tmp_path):
             assert r.headers['cache-control']=='no-store'
             denied=client.get('/_m1/assets/audio1')
             assert denied.status_code==403 and denied.json()['code']==1005 and raw not in denied.content
+            APIResponse[dict].model_validate(denied.json())
+            assert denied.json()['trace_id']==denied.headers['X-Trace-ID']
     assert len(reader.calls)==2
 
 @pytest.mark.parametrize('change',['missing','project','job','subject','expired','access_revoked','service_revoked','grant_revoked','task_revoked','key_revoked'])
@@ -58,6 +61,8 @@ def test_unauthorized_denied_before_target_open(private,tmp_path,change):
     with TestClient(assets.http_app()) as client:
         r=client.get('/audio1',headers=h)
         assert r.status_code==403 and r.headers['content-type'].startswith('application/json')
+        APIResponse[dict].model_validate(r.json())
+        assert r.json()['trace_id']==r.headers['X-Trace-ID']
         assert raw not in r.content and hashlib.sha256(r.content).digest()!=hashlib.sha256(raw).digest()
     assert reader.calls==[]
 
