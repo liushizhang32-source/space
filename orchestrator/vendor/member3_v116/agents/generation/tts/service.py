@@ -40,7 +40,7 @@ async def handle_unexpected(_request: Request, exc: Exception) -> JSONResponse:
     )
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, *, m1_assets=None) -> FastAPI:
     settings = settings or Settings.from_env()
     # M1 owns configuration validation and release policy, including direct
     # factory calls. Never infer authorization from Member3 settings or headers.
@@ -51,6 +51,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.tts_client = TTSClient(settings)
     app.include_router(router)
+    if m1_assets is not None:
+        from orchestrator.services.offline_protocols.assets import PrivateAssets
+        if type(m1_assets) is not PrivateAssets or asset_settings.deployment_env != 'local' or asset_settings.asset_mode != 'blocked':
+            raise ValueError('Private offline assets require local M1 authority')
+        app.mount('/_m1/assets', m1_assets.http_app(), name='m1-private-assets')
     app.add_exception_handler(RequestValidationError, handle_validation_error)
     app.add_exception_handler(Exception, handle_unexpected)
 

@@ -1,0 +1,79 @@
+# 协议逐条追溯矩阵
+
+Version 1.0 / PROPOSED。测试文件按规则组执行正反向向量，不以同一句断言重复充数。
+
+|条款|冻结约束|新协议|Schema|源码|测试|责任|
+|---|---|---|---|---|---|---|
+|P1-01|冻结V1.0 F01–F08优先、无wire变更|M1_BILLING_AND_RECONCILIATION_PROTOCOL.md|BILLING_EVENT_SCHEMA.json|orchestrator/services/offline_protocols/billing.py|orchestrator/tests/test_offline_billing.py|M1|
+|P1-02|冻结V1.0 F01–F08优先、无wire变更|M1_BILLING_AND_RECONCILIATION_PROTOCOL.md|BILLING_EVENT_SCHEMA.json|orchestrator/services/offline_protocols/billing.py|orchestrator/tests/test_offline_billing.py|M1|
+|P1-03|冻结V1.0 F01–F08优先、无wire变更|M1_BILLING_AND_RECONCILIATION_PROTOCOL.md|BILLING_EVENT_SCHEMA.json|orchestrator/services/offline_protocols/billing.py|orchestrator/tests/test_offline_billing.py|M1|
+|P1-04|冻结V1.0 F01–F08优先、无wire变更|M1_BILLING_AND_RECONCILIATION_PROTOCOL.md|BILLING_EVENT_SCHEMA.json|orchestrator/services/offline_protocols/billing.py|orchestrator/tests/test_offline_billing.py|M1|
+|P1-05|冻结V1.0 F01–F08优先、无wire变更|M1_BILLING_AND_RECONCILIATION_PROTOCOL.md|BILLING_EVENT_SCHEMA.json|orchestrator/services/offline_protocols/billing.py|orchestrator/tests/test_offline_billing.py|M1|
+|P1-06|冻结V1.0 F01–F08优先、无wire变更|M1_BILLING_AND_RECONCILIATION_PROTOCOL.md|BILLING_EVENT_SCHEMA.json|orchestrator/services/offline_protocols/billing.py|orchestrator/tests/test_offline_billing.py|M1|
+|P1-07|冻结V1.0 F01–F08优先、无wire变更|M1_BILLING_AND_RECONCILIATION_PROTOCOL.md|BILLING_EVENT_SCHEMA.json|orchestrator/services/offline_protocols/billing.py|orchestrator/tests/test_offline_billing.py|M1|
+|P1-08|冻结V1.0 F01–F08优先、无wire变更|M1_BILLING_AND_RECONCILIATION_PROTOCOL.md|BILLING_EVENT_SCHEMA.json|orchestrator/services/offline_protocols/billing.py|orchestrator/tests/test_offline_billing.py|M1|
+|P1-09|冻结V1.0 F01–F08优先、无wire变更|M1_BILLING_AND_RECONCILIATION_PROTOCOL.md|BILLING_EVENT_SCHEMA.json|orchestrator/services/offline_protocols/billing.py|orchestrator/tests/test_offline_billing.py|M1|
+|P1-10|冻结V1.0 F01–F08优先、无wire变更|M1_BILLING_AND_RECONCILIATION_PROTOCOL.md|BILLING_EVENT_SCHEMA.json|orchestrator/services/offline_protocols/billing.py|orchestrator/tests/test_offline_billing.py|M1|
+|P1-11|冻结V1.0 F01–F08优先、无wire变更|M1_BILLING_AND_RECONCILIATION_PROTOCOL.md|BILLING_EVENT_SCHEMA.json|orchestrator/services/offline_protocols/billing.py|orchestrator/tests/test_offline_billing.py|M1|
+|P1-12|冻结V1.0 F01–F08优先、无wire变更|M1_BILLING_AND_RECONCILIATION_PROTOCOL.md|BILLING_EVENT_SCHEMA.json|orchestrator/services/offline_protocols/billing.py|orchestrator/tests/test_offline_billing.py|M1|
+|P1-13|冻结V1.0 F01–F08优先、无wire变更|M1_BILLING_AND_RECONCILIATION_PROTOCOL.md|BILLING_EVENT_SCHEMA.json|orchestrator/services/offline_protocols/billing.py|orchestrator/tests/test_offline_billing.py|M1|
+|P1-14|冻结V1.0 F01–F08优先、无wire变更|M1_BILLING_AND_RECONCILIATION_PROTOCOL.md|BILLING_EVENT_SCHEMA.json|orchestrator/services/offline_protocols/billing.py|orchestrator/tests/test_offline_billing.py|M1|
+|P1-15|冻结V1.0 F01–F08优先、无wire变更|M1_BILLING_AND_RECONCILIATION_PROTOCOL.md|BILLING_EVENT_SCHEMA.json|orchestrator/services/offline_protocols/billing.py|orchestrator/tests/test_offline_billing.py|M1|
+|P1-16|冻结V1.0 F01–F08优先、无wire变更|M1_BILLING_AND_RECONCILIATION_PROTOCOL.md|BILLING_EVENT_SCHEMA.json|orchestrator/services/offline_protocols/billing.py|orchestrator/tests/test_offline_billing.py|M1|
+|P1-17|冻结V1.0 F01–F08优先、无wire变更|M1_BILLING_AND_RECONCILIATION_PROTOCOL.md|BILLING_EVENT_SCHEMA.json|orchestrator/services/offline_protocols/billing.py|orchestrator/tests/test_offline_billing.py|M1|
+|P1-18|冻结V1.0 F01–F08优先、无wire变更|M1_BILLING_AND_RECONCILIATION_PROTOCOL.md|BILLING_EVENT_SCHEMA.json|orchestrator/services/offline_protocols/billing.py|orchestrator/tests/test_offline_billing.py|M1|
+|P2-01|冻结V1.0 F01–F08优先、无wire变更|M1_ASSET_AUTHORIZATION_PROTOCOL.md|ASSET_REFERENCE_SCHEMA.json|orchestrator/services/offline_protocols/assets.py|orchestrator/tests/test_offline_private_assets.py|M1/M3|
+|P2-02|冻结V1.0 F01–F08优先、无wire变更|M1_ASSET_AUTHORIZATION_PROTOCOL.md|ASSET_REFERENCE_SCHEMA.json|orchestrator/services/offline_protocols/assets.py|orchestrator/tests/test_offline_private_assets.py|M1/M3|
+|P2-03|冻结V1.0 F01–F08优先、无wire变更|M1_ASSET_AUTHORIZATION_PROTOCOL.md|ASSET_REFERENCE_SCHEMA.json|orchestrator/services/offline_protocols/assets.py|orchestrator/tests/test_offline_private_assets.py|M1/M3|
+|P2-04|冻结V1.0 F01–F08优先、无wire变更|M1_ASSET_AUTHORIZATION_PROTOCOL.md|ASSET_REFERENCE_SCHEMA.json|orchestrator/services/offline_protocols/assets.py|orchestrator/tests/test_offline_private_assets.py|M1/M3|
+|P2-05|冻结V1.0 F01–F08优先、无wire变更|M1_ASSET_AUTHORIZATION_PROTOCOL.md|ASSET_REFERENCE_SCHEMA.json|orchestrator/services/offline_protocols/assets.py|orchestrator/tests/test_offline_private_assets.py|M1/M3|
+|P2-06|冻结V1.0 F01–F08优先、无wire变更|M1_ASSET_AUTHORIZATION_PROTOCOL.md|ASSET_REFERENCE_SCHEMA.json|orchestrator/services/offline_protocols/assets.py|orchestrator/tests/test_offline_private_assets.py|M1/M3|
+|P2-07|冻结V1.0 F01–F08优先、无wire变更|M1_ASSET_AUTHORIZATION_PROTOCOL.md|ASSET_REFERENCE_SCHEMA.json|orchestrator/services/offline_protocols/assets.py|orchestrator/tests/test_offline_private_assets.py|M1/M3|
+|P2-08|冻结V1.0 F01–F08优先、无wire变更|M1_ASSET_AUTHORIZATION_PROTOCOL.md|ASSET_REFERENCE_SCHEMA.json|orchestrator/services/offline_protocols/assets.py|orchestrator/tests/test_offline_private_assets.py|M1/M3|
+|P2-09|冻结V1.0 F01–F08优先、无wire变更|M1_ASSET_AUTHORIZATION_PROTOCOL.md|ASSET_REFERENCE_SCHEMA.json|orchestrator/services/offline_protocols/assets.py|orchestrator/tests/test_offline_private_assets.py|M1/M3|
+|P2-10|冻结V1.0 F01–F08优先、无wire变更|M1_ASSET_AUTHORIZATION_PROTOCOL.md|ASSET_REFERENCE_SCHEMA.json|orchestrator/services/offline_protocols/assets.py|orchestrator/tests/test_offline_private_assets.py|M1/M3|
+|P2-11|冻结V1.0 F01–F08优先、无wire变更|M1_ASSET_AUTHORIZATION_PROTOCOL.md|ASSET_REFERENCE_SCHEMA.json|orchestrator/services/offline_protocols/assets.py|orchestrator/tests/test_offline_private_assets.py|M1/M3|
+|P2-12|冻结V1.0 F01–F08优先、无wire变更|M1_ASSET_AUTHORIZATION_PROTOCOL.md|ASSET_REFERENCE_SCHEMA.json|orchestrator/services/offline_protocols/assets.py|orchestrator/tests/test_offline_private_assets.py|M1/M3|
+|P2-13|冻结V1.0 F01–F08优先、无wire变更|M1_ASSET_AUTHORIZATION_PROTOCOL.md|ASSET_REFERENCE_SCHEMA.json|orchestrator/services/offline_protocols/assets.py|orchestrator/tests/test_offline_private_assets.py|M1/M3|
+|P2-14|冻结V1.0 F01–F08优先、无wire变更|M1_ASSET_AUTHORIZATION_PROTOCOL.md|ASSET_REFERENCE_SCHEMA.json|orchestrator/services/offline_protocols/assets.py|orchestrator/tests/test_offline_private_assets.py|M1/M3|
+|P2-15|冻结V1.0 F01–F08优先、无wire变更|M1_ASSET_AUTHORIZATION_PROTOCOL.md|ASSET_REFERENCE_SCHEMA.json|orchestrator/services/offline_protocols/assets.py|orchestrator/tests/test_offline_private_assets.py|M1/M3|
+|P2-16|冻结V1.0 F01–F08优先、无wire变更|M1_ASSET_AUTHORIZATION_PROTOCOL.md|ASSET_REFERENCE_SCHEMA.json|orchestrator/services/offline_protocols/assets.py|orchestrator/tests/test_offline_private_assets.py|M1/M3|
+|P2-17|冻结V1.0 F01–F08优先、无wire变更|M1_ASSET_AUTHORIZATION_PROTOCOL.md|ASSET_REFERENCE_SCHEMA.json|orchestrator/services/offline_protocols/assets.py|orchestrator/tests/test_offline_private_assets.py|M1/M3|
+|P2-18|冻结V1.0 F01–F08优先、无wire变更|M1_ASSET_AUTHORIZATION_PROTOCOL.md|ASSET_REFERENCE_SCHEMA.json|orchestrator/services/offline_protocols/assets.py|orchestrator/tests/test_offline_private_assets.py|M1/M3|
+|P2-19|冻结V1.0 F01–F08优先、无wire变更|M1_ASSET_AUTHORIZATION_PROTOCOL.md|ASSET_REFERENCE_SCHEMA.json|orchestrator/services/offline_protocols/assets.py|orchestrator/tests/test_offline_private_assets.py|M1/M3|
+|P3-01|冻结V1.0 F01–F08优先、无wire变更|M1_M2_M3_RUNTIME_INTEGRATION_PROTOCOL.md|frozen_m1_m2_v1_0/REQUEST_SCHEMA.json|orchestrator/services/vision_supervisor/durable.py|orchestrator/tests/test_offline_protocol_joint.py|M1/M2/M3|
+|P3-02|冻结V1.0 F01–F08优先、无wire变更|M1_M2_M3_RUNTIME_INTEGRATION_PROTOCOL.md|frozen_m1_m2_v1_0/REQUEST_SCHEMA.json|orchestrator/services/vision_supervisor/durable.py|orchestrator/tests/test_offline_protocol_joint.py|M1/M2/M3|
+|P3-03|冻结V1.0 F01–F08优先、无wire变更|M1_M2_M3_RUNTIME_INTEGRATION_PROTOCOL.md|frozen_m1_m2_v1_0/REQUEST_SCHEMA.json|orchestrator/services/vision_supervisor/durable.py|orchestrator/tests/test_offline_protocol_joint.py|M1/M2/M3|
+|P3-04|冻结V1.0 F01–F08优先、无wire变更|M1_M2_M3_RUNTIME_INTEGRATION_PROTOCOL.md|frozen_m1_m2_v1_0/REQUEST_SCHEMA.json|orchestrator/services/vision_supervisor/durable.py|orchestrator/tests/test_offline_protocol_joint.py|M1/M2/M3|
+|P3-05|冻结V1.0 F01–F08优先、无wire变更|M1_M2_M3_RUNTIME_INTEGRATION_PROTOCOL.md|frozen_m1_m2_v1_0/REQUEST_SCHEMA.json|orchestrator/services/vision_supervisor/durable.py|orchestrator/tests/test_offline_protocol_joint.py|M1/M2/M3|
+|P3-06|冻结V1.0 F01–F08优先、无wire变更|M1_M2_M3_RUNTIME_INTEGRATION_PROTOCOL.md|frozen_m1_m2_v1_0/REQUEST_SCHEMA.json|orchestrator/services/vision_supervisor/durable.py|orchestrator/tests/test_offline_protocol_joint.py|M1/M2/M3|
+|P3-07|冻结V1.0 F01–F08优先、无wire变更|M1_M2_M3_RUNTIME_INTEGRATION_PROTOCOL.md|frozen_m1_m2_v1_0/REQUEST_SCHEMA.json|orchestrator/services/vision_supervisor/durable.py|orchestrator/tests/test_offline_protocol_joint.py|M1/M2/M3|
+|P3-08|冻结V1.0 F01–F08优先、无wire变更|M1_M2_M3_RUNTIME_INTEGRATION_PROTOCOL.md|frozen_m1_m2_v1_0/REQUEST_SCHEMA.json|orchestrator/services/vision_supervisor/durable.py|orchestrator/tests/test_offline_protocol_joint.py|M1/M2/M3|
+|P3-09|冻结V1.0 F01–F08优先、无wire变更|M1_M2_M3_RUNTIME_INTEGRATION_PROTOCOL.md|frozen_m1_m2_v1_0/REQUEST_SCHEMA.json|orchestrator/services/vision_supervisor/durable.py|orchestrator/tests/test_offline_protocol_joint.py|M1/M2/M3|
+|P3-10|冻结V1.0 F01–F08优先、无wire变更|M1_M2_M3_RUNTIME_INTEGRATION_PROTOCOL.md|frozen_m1_m2_v1_0/REQUEST_SCHEMA.json|orchestrator/services/vision_supervisor/durable.py|orchestrator/tests/test_offline_protocol_joint.py|M1/M2/M3|
+|P3-11|冻结V1.0 F01–F08优先、无wire变更|M1_M2_M3_RUNTIME_INTEGRATION_PROTOCOL.md|frozen_m1_m2_v1_0/REQUEST_SCHEMA.json|orchestrator/services/vision_supervisor/durable.py|orchestrator/tests/test_offline_protocol_joint.py|M1/M2/M3|
+|P3-12|冻结V1.0 F01–F08优先、无wire变更|M1_M2_M3_RUNTIME_INTEGRATION_PROTOCOL.md|frozen_m1_m2_v1_0/REQUEST_SCHEMA.json|orchestrator/services/vision_supervisor/durable.py|orchestrator/tests/test_offline_protocol_joint.py|M1/M2/M3|
+|P3-13|冻结V1.0 F01–F08优先、无wire变更|M1_M2_M3_RUNTIME_INTEGRATION_PROTOCOL.md|frozen_m1_m2_v1_0/REQUEST_SCHEMA.json|orchestrator/services/vision_supervisor/durable.py|orchestrator/tests/test_offline_protocol_joint.py|M1/M2/M3|
+|P3-14|冻结V1.0 F01–F08优先、无wire变更|M1_M2_M3_RUNTIME_INTEGRATION_PROTOCOL.md|frozen_m1_m2_v1_0/REQUEST_SCHEMA.json|orchestrator/services/vision_supervisor/durable.py|orchestrator/tests/test_offline_protocol_joint.py|M1/M2/M3|
+|P3-15|冻结V1.0 F01–F08优先、无wire变更|M1_M2_M3_RUNTIME_INTEGRATION_PROTOCOL.md|frozen_m1_m2_v1_0/REQUEST_SCHEMA.json|orchestrator/services/vision_supervisor/durable.py|orchestrator/tests/test_offline_protocol_joint.py|M1/M2/M3|
+|P3-16|冻结V1.0 F01–F08优先、无wire变更|M1_M2_M3_RUNTIME_INTEGRATION_PROTOCOL.md|frozen_m1_m2_v1_0/REQUEST_SCHEMA.json|orchestrator/services/vision_supervisor/durable.py|orchestrator/tests/test_offline_protocol_joint.py|M1/M2/M3|
+|P3-17|冻结V1.0 F01–F08优先、无wire变更|M1_M2_M3_RUNTIME_INTEGRATION_PROTOCOL.md|frozen_m1_m2_v1_0/REQUEST_SCHEMA.json|orchestrator/services/vision_supervisor/durable.py|orchestrator/tests/test_offline_protocol_joint.py|M1/M2/M3|
+|P3-18|冻结V1.0 F01–F08优先、无wire变更|M1_M2_M3_RUNTIME_INTEGRATION_PROTOCOL.md|frozen_m1_m2_v1_0/REQUEST_SCHEMA.json|orchestrator/services/vision_supervisor/durable.py|orchestrator/tests/test_offline_protocol_joint.py|M1/M2/M3|
+|P3-19|冻结V1.0 F01–F08优先、无wire变更|M1_M2_M3_RUNTIME_INTEGRATION_PROTOCOL.md|frozen_m1_m2_v1_0/REQUEST_SCHEMA.json|orchestrator/services/vision_supervisor/durable.py|orchestrator/tests/test_offline_protocol_joint.py|M1/M2/M3|
+|P3-20|冻结V1.0 F01–F08优先、无wire变更|M1_M2_M3_RUNTIME_INTEGRATION_PROTOCOL.md|frozen_m1_m2_v1_0/REQUEST_SCHEMA.json|orchestrator/services/vision_supervisor/durable.py|orchestrator/tests/test_offline_protocol_joint.py|M1/M2/M3|
+|P4-01|冻结V1.0 F01–F08优先、无wire变更|M1_M2_M3_GOVERNANCE_AND_ACCEPTANCE_PROTOCOL.md|registry.json|scripts/run_full_offline_acceptance.py|orchestrator/tests/test_offline_protocol_registry.py|M1管理|
+|P4-02|冻结V1.0 F01–F08优先、无wire变更|M1_M2_M3_GOVERNANCE_AND_ACCEPTANCE_PROTOCOL.md|registry.json|scripts/run_full_offline_acceptance.py|orchestrator/tests/test_offline_protocol_registry.py|M1管理|
+|P4-03|冻结V1.0 F01–F08优先、无wire变更|M1_M2_M3_GOVERNANCE_AND_ACCEPTANCE_PROTOCOL.md|registry.json|scripts/run_full_offline_acceptance.py|orchestrator/tests/test_offline_protocol_registry.py|M1管理|
+|P4-04|冻结V1.0 F01–F08优先、无wire变更|M1_M2_M3_GOVERNANCE_AND_ACCEPTANCE_PROTOCOL.md|registry.json|scripts/run_full_offline_acceptance.py|orchestrator/tests/test_offline_protocol_registry.py|M1管理|
+|P4-05|冻结V1.0 F01–F08优先、无wire变更|M1_M2_M3_GOVERNANCE_AND_ACCEPTANCE_PROTOCOL.md|registry.json|scripts/run_full_offline_acceptance.py|orchestrator/tests/test_offline_protocol_registry.py|M1管理|
+|P4-06|冻结V1.0 F01–F08优先、无wire变更|M1_M2_M3_GOVERNANCE_AND_ACCEPTANCE_PROTOCOL.md|registry.json|scripts/run_full_offline_acceptance.py|orchestrator/tests/test_offline_protocol_registry.py|M1管理|
+|P4-07|冻结V1.0 F01–F08优先、无wire变更|M1_M2_M3_GOVERNANCE_AND_ACCEPTANCE_PROTOCOL.md|registry.json|scripts/run_full_offline_acceptance.py|orchestrator/tests/test_offline_protocol_registry.py|M1管理|
+|P4-08|冻结V1.0 F01–F08优先、无wire变更|M1_M2_M3_GOVERNANCE_AND_ACCEPTANCE_PROTOCOL.md|registry.json|scripts/run_full_offline_acceptance.py|orchestrator/tests/test_offline_protocol_registry.py|M1管理|
+|P4-09|冻结V1.0 F01–F08优先、无wire变更|M1_M2_M3_GOVERNANCE_AND_ACCEPTANCE_PROTOCOL.md|registry.json|scripts/run_full_offline_acceptance.py|orchestrator/tests/test_offline_protocol_registry.py|M1管理|
+|P4-10|冻结V1.0 F01–F08优先、无wire变更|M1_M2_M3_GOVERNANCE_AND_ACCEPTANCE_PROTOCOL.md|registry.json|scripts/run_full_offline_acceptance.py|orchestrator/tests/test_offline_protocol_registry.py|M1管理|
+|P4-11|冻结V1.0 F01–F08优先、无wire变更|M1_M2_M3_GOVERNANCE_AND_ACCEPTANCE_PROTOCOL.md|registry.json|scripts/run_full_offline_acceptance.py|orchestrator/tests/test_offline_protocol_registry.py|M1管理|
+|P4-12|冻结V1.0 F01–F08优先、无wire变更|M1_M2_M3_GOVERNANCE_AND_ACCEPTANCE_PROTOCOL.md|registry.json|scripts/run_full_offline_acceptance.py|orchestrator/tests/test_offline_protocol_registry.py|M1管理|
+|P4-13|冻结V1.0 F01–F08优先、无wire变更|M1_M2_M3_GOVERNANCE_AND_ACCEPTANCE_PROTOCOL.md|registry.json|scripts/run_full_offline_acceptance.py|orchestrator/tests/test_offline_protocol_registry.py|M1管理|
+|P4-14|冻结V1.0 F01–F08优先、无wire变更|M1_M2_M3_GOVERNANCE_AND_ACCEPTANCE_PROTOCOL.md|registry.json|scripts/run_full_offline_acceptance.py|orchestrator/tests/test_offline_protocol_registry.py|M1管理|
+
+外部依赖：真实供应商账单验证、真实模型/后端取消、生产身份/KMS、真实语料质量、ChatGPT冻结/合并批准。本轮以隔离离线适配验证，不称完成这些外部能力。

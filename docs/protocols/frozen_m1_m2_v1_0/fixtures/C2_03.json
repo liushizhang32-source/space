@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.0",
+  "book_id": "book01",
+  "page_id": "book01_p03",
+  "page_no": 3,
+  "image_width": 96,
+  "image_height": 128,
+  "elapsed_ms": 1,
+  "status": "ok",
+  "description": "synthetic protocol fixture",
+  "objects": [
+    {
+      "object_id": "book01_p03_o01",
+      "label": "合成图形",
+      "bbox": [
+        1,
+        1,
+        10,
+        10
+      ],
+      "confidence": 0.5
+    }
+  ],
+  "scene_tags": [],
+  "safety": {
+    "pass": true,
+    "flags": []
+  }
+}

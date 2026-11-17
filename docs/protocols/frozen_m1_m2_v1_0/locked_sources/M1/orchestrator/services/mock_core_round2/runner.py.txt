@@ -1,0 +1,73 @@
+"""Offline opt-in runner; reuses the unmodified process Supervisor and Gate."""
+from dataclasses import asdict
+import threading
+
+from .core import RuntimeFences, STAGES
+from ..vision_supervisor.supervisor import Generation, Cancelled
+
+
+def run_mock(core,jid,supervisor,gate,image,size,spec,provider,*,fault=lambda _:None):
+    if spec.execution_scope!='process_tree' or spec.backend is not None or spec.environment:
+        raise ValueError('round2 runner only accepts credential-free local fixtures')
+    if core.get(jid)['status']=='done': return core.get(jid)
+    fences=RuntimeFences(core,'ocr'); j=core.get(jid)
+    core.live(j,j['callback_identity'])
+    record=Generation(jid,j['page_id'],j['generation_id'],j['revision'],j['epoch'])
+    fences.pages[record.page_id]=record; fences.serial[record.page_id]=threading.Lock()
+    with core.mutex:
+        if core.runtime: raise ValueError('single local runner capacity occupied')
+        core.runtime[jid]=(record,fences)
+    previous_audit=supervisor.audit
+    def audit(event):
+        identity={k:event[k] for k in asdict(record.identity)}
+        if event['job_id']==jid:
+            core.observe_execution(identity,event)
+        previous_audit(event)
+    supervisor.audit=audit
+    current='ocr'; callback=core.identity(jid)
+    def begin(stage):
+        nonlocal callback
+        callback=core.identity(jid)
+        j=core.get(jid); core.live(j,callback)
+        if j['stages'][stage]=='pending':
+            if not core.apply(callback,'stage',stage=stage,state='running'): raise Cancelled()
+    def end(stage,state='ok'):
+        nonlocal callback
+        callback=asdict(record.identity) if stage in {'ocr','vlm'} and record.identity else callback
+        if core.get(jid)['stages'][stage]=='running':
+            if not core.apply(callback,'stage',stage=stage,state=state): raise Cancelled()
+    try:
+        pair=core.load_vision(jid)
+        if pair is None:
+            begin('ocr')
+            c1=supervisor.run(record,fences,'ocr',lambda _:spec,image)
+            ocr=gate.c1(c1,record.page_id,size); end('ocr','empty' if ocr.status=='empty' else 'ok')
+            current='vlm'; fences.stage='vlm'; begin('vlm')
+            c2=supervisor.run(record,fences,'vlm',lambda _:spec,image,c1=c1)
+            gate.accept(record,fences,c1,c2,size)
+            core.store_vision(jid,c1,c2); end('vlm')
+        else:
+            # Snapshot bytes were committed only after Gate accepted them. A
+            # crash between snapshot and stage commit finishes that barrier.
+            if core.get(jid)['stages']['vlm']=='running':
+                core.apply(core.identity(jid),'stage',stage='vlm',state='ok')
+        for stage in STAGES[2:-1]:
+            current=stage; begin(stage)
+            callback=core.identity(jid)
+            if stage=='video_submit':
+                core.submit(callback,provider,fault=fault)
+            end(stage)
+        current='render'; begin('render'); callback=core.identity(jid)
+        core.publish(callback,gate,size,fault=fault)
+        core.release(jid)
+        return core.get(jid)
+    except Exception as exc:
+        # Never fetch a fresh identity to stamp onto a late failure.
+        old=asdict(record.identity) if current in {'ocr','vlm'} and record.identity else callback
+        # Unknown submission stays recoverable/leased; no new attempt is made.
+        if 'submit_unknown' not in str(exc):
+            core.fail(jid,current,getattr(exc,'code',9001),identity=old)
+        raise
+    finally:
+        supervisor.audit=previous_audit
+        with core.mutex: core.runtime.pop(jid,None)

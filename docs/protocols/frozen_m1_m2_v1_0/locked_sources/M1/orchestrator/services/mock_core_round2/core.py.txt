@@ -1,0 +1,318 @@
+"""Round-2 single-owner SQLite core, sharing the existing Supervisor and Gate.
+
+Fresh separate databases only. No HTTP registration and no real providers.
+Business callbacks require the complete current identity; historical execution
+reconciliation may update its own row but never the current business state.
+"""
+from contextlib import contextmanager
+from dataclasses import asdict
+import hashlib
+import json
+from pathlib import Path
+import sqlite3
+import threading
+import uuid
+
+from ..mock_core_v01.core import Core as LegacyCore, STAGES, TERMINAL, encoded
+from ..mock_core_v01.mock import verify_mock, REQUIRED
+from ..vision_supervisor.supervisor import Fences, Generation, Identity, Snapshot, Cancelled
+from ..vision_supervisor.pipeline import AtomicStore
+
+
+def token(): return uuid.uuid4().hex
+
+
+class RuntimeFences(Fences):
+    def __init__(self, core, stage):
+        super().__init__(); self.core=core; self.stage=stage
+
+    def attempt(self, record):
+        # Lock order is always Core -> Fences, also used by cancel().
+        with self.core.mutex:
+            j=self.core.get(record.job_id)
+            self.core.check(j,record.generation_id,record.epoch)
+            identity=super().attempt(record)
+            self.core.register_execution(identity,self.stage)
+            return identity
+
+
+class Core(LegacyCore):
+    def __init__(self, database, *, clock=None):
+        path=Path(database).resolve()
+        if path.exists():
+            with sqlite3.connect(path.as_uri()+'?mode=ro',uri=True) as probe:
+                if not probe.execute("SELECT 1 FROM sqlite_master WHERE name='round2_meta'").fetchone():
+                    raise ValueError('round2 requires a separate database; legacy migration not authorized')
+        self.mutex=threading.RLock(); self.runtime={}; self.recovered=False; self.submit_locks={}
+        super().__init__(path,clock=clock)
+        self.db.close()
+        self.db=sqlite3.connect(path,isolation_level=None,check_same_thread=False)
+        self.db.row_factory=sqlite3.Row
+        self.db.execute('PRAGMA foreign_keys=ON'); self.db.execute('PRAGMA synchronous=FULL')
+        self.db.executescript('''
+          CREATE TABLE IF NOT EXISTS round2_meta(version INTEGER PRIMARY KEY CHECK(version=2));
+          INSERT OR IGNORE INTO round2_meta VALUES(2);
+          CREATE TABLE IF NOT EXISTS executions(id TEXT PRIMARY KEY, job TEXT REFERENCES jobs(id), identity TEXT NOT NULL,
+            stage TEXT, scope TEXT, resource TEXT UNIQUE, cancel_requested INTEGER DEFAULT 0,
+            worker_exited INTEGER DEFAULT 0, local_terminal_confirmed INTEGER DEFAULT 0,
+            backend_terminal_confirmed INTEGER DEFAULT 0, cleaned INTEGER DEFAULT 0, cleanup_observed INTEGER DEFAULT 0);
+          CREATE TABLE IF NOT EXISTS submissions(job TEXT PRIMARY KEY REFERENCES jobs(id), identity TEXT NOT NULL,
+            idem TEXT UNIQUE NOT NULL, state TEXT NOT NULL, task_ref TEXT, resource TEXT UNIQUE,
+            client_exited INTEGER DEFAULT 0, backend_terminal_confirmed INTEGER DEFAULT 0);
+          CREATE TABLE IF NOT EXISTS vision_snapshots(job TEXT PRIMARY KEY REFERENCES jobs(id), data TEXT NOT NULL, sha256 TEXT NOT NULL);
+        ''')
+        if 'cleanup_observed' not in {r[1] for r in self.db.execute('PRAGMA table_info(executions)')}:
+            self.close()
+            raise ValueError('incompatible round2 candidate schema; use a fresh separate database')
+        self.recover()
+
+    @contextmanager
+    def transaction(self):
+        with self.mutex:
+            with super().transaction(): yield
+
+    def get(self, jid):
+        with self.mutex: return super().get(jid)
+
+    def identity(self,jid): return self.get(jid)['callback_identity']
+
+    @staticmethod
+    def control(j):
+        return dict(job_id=j['job_id'],page_id=j['page_id'],generation_id=j['generation_id'],
+                    input_revision=j['revision'],epoch=j['epoch'],attempt_id='control_'+token(),fencing_token=token())
+
+    def matches(self,j,identity):
+        expected=j.get('callback_identity')
+        return (type(identity) is dict and expected is not None and set(identity)==set(expected)
+                and all(type(identity[k]) is type(v) and identity[k]==v for k,v in expected.items()))
+
+    def live(self,j,identity):
+        if not self.matches(j,identity): raise ValueError('stale callback identity')
+        self.check(j,identity['generation_id'],identity['epoch'])
+
+    def unresolved(self,jid):
+        return (self.db.execute('SELECT 1 FROM executions WHERE job=? AND cleaned=0',(jid,)).fetchone()
+                or self.db.execute('SELECT 1 FROM submissions WHERE job=? AND backend_terminal_confirmed=0',(jid,)).fetchone())
+
+    def create(self,scope,page,**kw):
+        with self.mutex:
+            for row in self.db.execute('SELECT id FROM jobs').fetchall():
+                j=self.get(row[0])
+                if j['scope']==scope and j['page_id']==page and self.unresolved(j['job_id']):
+                    if not kw.get('force') and j['status'] not in TERMINAL:
+                        break  # Legacy create still checks active-request parameters.
+                    raise ValueError('execution termination unconfirmed')
+            j=super().create(scope,page,**kw)
+            if 'callback_identity' not in j:
+                with self.transaction():
+                    j=self.get(j['job_id']); j['callback_identity']=self.control(j)
+                    j['round2']=True; self.save(j,'round2_initialized')
+            return j
+
+    def apply(self,identity,kind,*,stage=None,state=None,code=9001):
+        """Only business callback ingress. Stale callbacks are audit-only."""
+        with self.transaction():
+            j=self.get(identity['job_id'])
+            if not self.matches(j,identity) or j['status'] in TERMINAL or j['cancel_requested']:
+                self.event(j['job_id'],'rejected_stale_'+kind); return False
+            if kind not in {'failure','timeout','cancel'}: self.live(j,identity)
+            if kind in {'failure','timeout'}:
+                j['status']='failed'; j['error']=str(code); j['manifest']=None
+                if stage in STAGES: j['stages'][stage]='failed'
+                for s in STAGES:
+                    if j['stages'][s]=='pending': j['stages'][s]='skipped'
+                self.db.execute('DELETE FROM active WHERE job=?',(j['job_id'],))
+            elif kind=='cancel':
+                j['status']='cancelled'; j['cancel_requested']=True; j['manifest']=None
+                self.db.execute('DELETE FROM active WHERE job=?',(j['job_id'],))
+                self.db.execute('UPDATE executions SET cancel_requested=1 WHERE job=?',(j['job_id'],))
+            elif kind=='stage':
+                if stage not in STAGES: raise ValueError('unknown stage')
+                current=j['stages'][stage]
+                previous=[j['stages'][s] for s in STAGES[:STAGES.index(stage)]]
+                if (state=='running' and (current!='pending' or any(v not in {'ok','empty'} for v in previous))
+                        or state in {'ok','empty'} and current!='running'
+                        or state not in {'running','ok','empty'}
+                        or state=='empty' and stage not in {'ocr','vlm'}
+                        or stage=='render' and state=='ok'):
+                    raise ValueError('illegal stage transition')
+                j['stages'][stage]=state; j['status']='running'
+            else: raise ValueError('unknown business event')
+            j['progress']=100*sum(s in {'ok','empty','failed','skipped'} for s in j['stages'].values())//9
+            self.save(j,'round2_'+kind)
+            if kind in {'cancel','failure','timeout'} and j['job_id'] in self.runtime:
+                record,fences=self.runtime[j['job_id']]; fences.cancel(record)
+            return True
+
+    def cancel(self,jid,*,identity=None):
+        with self.mutex:
+            j=self.get(jid)
+            if identity is not None and not self.matches(j,identity):
+                with self.transaction(): self.event(jid,'rejected_stale_cancel')
+                return False
+            if j['status'] in TERMINAL: return j
+            self.apply(identity or j['callback_identity'],'cancel')
+            return self.get(jid)
+
+    def fail(self,jid,stage,code,*,identity=None):
+        if identity is None or identity.get('job_id')!=jid: return False
+        return self.apply(identity,'failure',stage=stage,code=code)
+
+    def transition(self,*args,**kw):
+        raise ValueError('round2 requires apply(full_identity, stage event)')
+
+    def begin_attempt(self,*args,**kw):
+        raise ValueError('use round2 execution/submission registration')
+
+    def client_exited(self,*args,**kw): raise ValueError('use observe_execution with full identity')
+    def confirm_mock_terminal(self,*args,**kw): raise ValueError('use explicit mock submission reconciliation')
+
+    def register_execution(self,identity,stage,*,scope='local_mock_tree',resource='vision-fixture'):
+        identity=asdict(identity) if isinstance(identity,Identity) else identity
+        with self.transaction():
+            j=self.get(identity['job_id']); self.check(j,identity['generation_id'],identity['epoch'])
+            if identity['page_id']!=j['page_id'] or identity['input_revision']!=j['revision']:
+                raise ValueError('execution input mismatch')
+            if scope not in {'local_mock_tree','external_mock'}: raise ValueError('mock execution scopes only')
+            self.db.execute('INSERT INTO executions(id,job,identity,stage,scope,resource) VALUES(?,?,?,?,?,?)',
+                (identity['attempt_id'],j['job_id'],encoded(identity),stage,scope,resource))
+            j['callback_identity']=identity; self.save(j,'execution_registered_before_launch')
+
+    def observe_execution(self,identity,event):
+        """Trusted Supervisor evidence, reconciles only this historical execution."""
+        with self.transaction():
+            row=self.db.execute('SELECT * FROM executions WHERE id=?',(identity['attempt_id'],)).fetchone()
+            if not row or encoded(identity)!=row['identity']: raise ValueError('execution receipt mismatch')
+            if event['event']=='reaped':
+                if type(event.get('active')) is not int or event['active']!=0 or not event.get('member_exit_witness') or not all(v is True for v in event['member_exit_witness'].values()):
+                    raise ValueError('missing actual process-tree exit proof')
+                self.db.execute('UPDATE executions SET worker_exited=1,local_terminal_confirmed=? WHERE id=?',
+                    (int(row['scope']=='local_mock_tree'),row['id']))
+            elif event['event']=='cleaned':
+                if not row['worker_exited']: raise ValueError('cleanup is not exit proof')
+                terminal=row['local_terminal_confirmed'] or row['backend_terminal_confirmed']
+                self.db.execute('UPDATE executions SET cleanup_observed=1,cleaned=?,resource=CASE WHEN ? THEN NULL ELSE resource END WHERE id=?',
+                    (int(bool(terminal)),int(bool(terminal)),row['id']))
+            self.event(row['job'],'execution_'+event['event'])
+
+    def confirm_external_mock(self,identity,proof):
+        # Explicit FAKE service receipt; client exit alone never enters this path.
+        if proof!={'mode':'mock','identity':identity,'terminal':True} or type(proof.get('terminal')) is not bool:
+            raise ValueError('mock backend receipt mismatch')
+        with self.transaction():
+            row=self.db.execute('SELECT * FROM executions WHERE id=?',(identity['attempt_id'],)).fetchone()
+            if not row or row['identity']!=encoded(identity) or row['scope']!='external_mock' or encoded(proof['identity'])!=row['identity']: raise ValueError('wrong backend execution')
+            self.db.execute('UPDATE executions SET backend_terminal_confirmed=1,cleaned=(worker_exited AND cleanup_observed),resource=CASE WHEN worker_exited AND cleanup_observed THEN NULL ELSE resource END WHERE id=?',(row['id'],))
+            self.event(row['job'],'FAKE_backend_terminal_confirmed')
+
+    def release(self,jid):
+        with self.mutex:
+            if self.unresolved(jid): raise ValueError('execution termination unconfirmed; reservation retained')
+            return super().release(jid)
+
+    def recover(self):
+        with self.mutex:
+            if self.recovered: return [self.get(r[0]) for r in self.db.execute('SELECT id FROM jobs')]
+            if self.runtime: raise ValueError('cannot recover while local workers are active')
+            with self.transaction():
+                self.db.execute("UPDATE submissions SET state='unknown' WHERE state='submitting'")
+                for row in self.db.execute('SELECT id FROM jobs').fetchall():
+                    j=self.get(row[0])
+                    if j['status'] in TERMINAL: continue
+                    j['epoch']+=1; j['callback_identity']=self.control(j)
+                    if self.clock()>=j['deadline_ms'] or self.clock()<j['created_ms']:
+                        j['status']='failed'; j['error']='deadline'; self.db.execute('DELETE FROM active WHERE job=?',(j['job_id'],))
+                    elif self.db.execute('SELECT 1 FROM executions WHERE job=? AND cleaned=0',(j['job_id'],)).fetchone():
+                        j['error']='execution_unconfirmed'  # No inference from scheduler death.
+                    self.save(j,'round2_recovery_fenced')
+            self.recovered=True
+            return [self.get(r[0]) for r in self.db.execute('SELECT id FROM jobs')]
+
+    def submit(self,identity,provider,*,fault=lambda _:None):
+        with self.mutex:
+            lock=self.submit_locks.setdefault(identity['job_id'],threading.RLock())
+        with lock: return self._submit(identity,provider,fault=fault)
+
+    def _submit(self,identity,provider,*,fault):
+        from .provider import FakeProvider
+        if type(provider) is not FakeProvider: raise ValueError('only local deterministic fake provider allowed')
+        fault('submit_before_intent')
+        with self.transaction():
+            j=self.get(identity['job_id']); self.live(j,identity)
+            row=self.db.execute('SELECT * FROM submissions WHERE job=?',(j['job_id'],)).fetchone()
+            if row is None:
+                key=hashlib.sha256(encoded([j['scope'],j['page_id'],j['revision'],j['generation_id'],j['semantic']]).encode()).hexdigest()
+                self.db.execute('INSERT INTO submissions(job,identity,idem,state,resource) VALUES(?,?,?,?,?)',
+                    (j['job_id'],encoded(identity),key,'intent','deterministic-mock-provider'))
+                self.event(j['job_id'],'submit_intent_durable')
+            row=dict(self.db.execute('SELECT * FROM submissions WHERE job=?',(j['job_id'],)).fetchone())
+        if row['state']=='confirmed': return row['task_ref']
+        fault('intent_before_dispatch')
+        receipt=None
+        if row['state'] in {'unknown','submitting'}:
+            receipt=provider.lookup(row['idem']) if provider.supports_lookup else None
+            if receipt is None and not provider.supports_idempotency:
+                raise ValueError('submit_unknown; no safe resubmit capability')
+        if receipt is None:
+            with self.transaction():
+                self.live(self.get(identity['job_id']),identity)
+                self.db.execute("UPDATE submissions SET state='submitting' WHERE job=?",(identity['job_id'],))
+            receipt=provider.submit(row['idem'])
+            fault('provider_after_submit_before_record')
+        if (type(receipt) is not dict or receipt.get('mode')!='mock' or receipt.get('key')!=row['idem']
+                or type(receipt.get('terminal')) is not bool or not receipt['terminal']
+                or type(receipt.get('task_ref')) is not str):
+            raise ValueError('missing mock backend terminal receipt')
+        with self.transaction():
+            # Historical reconciliation is valid even after cancellation, but
+            # cannot change stages, progress or manifest.
+            self.db.execute("UPDATE submissions SET state='confirmed',task_ref=?,client_exited=1,backend_terminal_confirmed=1,resource=NULL WHERE job=? AND idem=?",
+                (receipt['task_ref'],identity['job_id'],row['idem']))
+            self.event(identity['job_id'],'FAKE_submit_terminal_reconciled')
+        fault('recorded_before_return')
+        return receipt['task_ref']
+
+    def store_vision(self,jid,c1,c2):
+        def snap(s): return dict(identity=asdict(s.identity),source_id=s.source_id,documents={k:v.hex() for k,v in s.documents.items()},reported_code=s.reported_code,image_sha256=s.image_sha256,c1_sha256=s.c1_sha256)
+        raw=encoded([snap(c1),snap(c2)])
+        with self.transaction():
+            self.live(self.get(jid),asdict(c2.identity))
+            self.db.execute('INSERT INTO vision_snapshots VALUES(?,?,?)',(jid,raw,hashlib.sha256(raw.encode()).hexdigest()))
+            self.event(jid,'gate_verified_snapshot_durable')
+
+    def load_vision(self,jid):
+        row=self.db.execute('SELECT * FROM vision_snapshots WHERE job=?',(jid,)).fetchone()
+        if not row: return None
+        if hashlib.sha256(row['data'].encode()).hexdigest()!=row['sha256']: raise ValueError('snapshot corruption')
+        return tuple(Snapshot(Identity(**s['identity']),s['source_id'],{k:bytes.fromhex(v) for k,v in s['documents'].items()},s['reported_code'],s['image_sha256'],s['c1_sha256']) for s in json.loads(row['data']))
+
+    def publish(self,identity,gate,size,*,fault=lambda _:None):
+        jid=identity['job_id']; j=self.get(jid); self.live(j,identity)
+        if self.unresolved(jid): raise ValueError('unconfirmed execution prevents publication')
+        if not self.db.execute("SELECT 1 FROM submissions WHERE job=? AND state='confirmed' AND backend_terminal_confirmed=1",(jid,)).fetchone():
+            raise ValueError('no confirmed fake submission')
+        pair=self.load_vision(jid)
+        if pair is None: raise ValueError('no persistent gated inputs')
+        c1,c2=pair
+        if any(getattr(c2.identity,k)!=v for k,v in dict(job_id=jid,page_id=j['page_id'],generation_id=j['generation_id'],input_revision=j['revision']).items()):
+            raise ValueError('snapshot lineage mismatch')
+        fences=Fences(); record=Generation(jid,j['page_id'],j['generation_id'],j['revision'],c2.identity.epoch)
+        record.identity=c2.identity; record.worker_state='reaped'; fences.pages[record.page_id]=record
+        # Revalidate original bytes against original provenance, never relabel
+        # archived safety evidence with a new epoch/attempt.
+        handoff=gate.accept(record,fences,c1,c2,size)
+        docs={name:encoded(dict(mode='mock',kind=name,playable=False)).encode() for name in REQUIRED}
+        docs.update({f'json/{record.page_id}_ocr.json':handoff.c1,f'json/{record.page_id}_vlm.json':handoff.c2,f'json/{record.page_id}_refs.json':handoff.sidecar})
+        store=AtomicStore(self.path.parent/'private-mock-assets',fences)
+        manifest=store.publish(record,c2.identity,docs,verify=verify_mock)
+        fault('files_before_db')
+        with self.transaction():
+            j=self.get(jid); self.live(j,identity)
+            if self.unresolved(jid) or j['stages']['render']!='running' or any(j['stages'][s] not in {'ok','empty'} for s in STAGES[:-1]):
+                raise ValueError('publication prerequisites changed')
+            manifest.update(mode='mock',publish_identity=identity)
+            manifest['manifest_sha256']=hashlib.sha256(encoded(manifest).encode()).hexdigest()
+            j['manifest']=manifest; j['status']='done'; j['stages']['render']='ok'; j['progress']=100
+            self.db.execute('DELETE FROM active WHERE job=?',(jid,)); self.save(j,'round2_atomic_publication')
+        fault('db_after_publish')
+        return manifest
