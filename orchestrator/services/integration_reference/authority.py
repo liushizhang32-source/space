@@ -142,6 +142,10 @@ class Authority(VisionLifecycle):
     @staticmethod
     def _state(db):
         tables=('meta','projects','grants','tokens','current','attempts','attempt_context','key_registry','vision_current','generation_upstream','stage_attempts','reservations','assets','requests','events')
+        # PROPOSED output protocol: protect its records with this same retained
+        # authority anchor. No second security ledger or balance is introduced.
+        tables+=tuple(t for t in ('output_assets','revoked_output_jobs') if db.execute(
+            'SELECT 1 FROM sqlite_master WHERE type=? AND name=?',('table',t)).fetchone())
         data={t:[[{'hex':v.hex()} if isinstance(v,bytes) else v for v in r] for r in db.execute('SELECT * FROM '+t+' ORDER BY 1,2')] for t in tables}
         data['schema']=[list(row) for row in db.execute('SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name')]
         return digest(canonical(data))

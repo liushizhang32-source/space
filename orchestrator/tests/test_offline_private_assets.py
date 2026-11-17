@@ -110,3 +110,24 @@ def test_output_id_immutable_and_production_injection_denied(private,tmp_path):
     rig,b,assets,token,reader,path,raw,ref=private
     with pytest.raises(Denied):assets.register_output(rig[3],b['token'],b['identity'],{**ref,'sha256':'0'*64})
     with pytest.raises(ValueError):create_app(Settings(data_dir=tmp_path/'prod',deployment_env='production',asset_mode='blocked'),m1_assets=assets)
+
+def test_output_registry_tamper_is_detected_by_original_authority_anchor(private):
+    import sqlite3
+    rig,b,assets,token,reader,path,raw,ref=private
+    assets.revoke_task('M1','req')
+    with sqlite3.connect(rig[0].path) as db:db.execute('DELETE FROM revoked_output_jobs')
+    with pytest.raises(Denied):assets.read(rig[3],token,'audio1',project='M1',job='req')
+    assert reader.calls==[]
+
+def test_private_registry_and_grant_survive_authority_reopen(private):
+    from orchestrator.services.integration_reference import Authority
+    rig,b,assets,token,reader,path,raw,ref=private;a,k,n,s=rig
+    reopened=Authority(a.path,a.anchor,k,lambda:n[0],offline_test=True)
+    again=PrivateAssets(reopened,path.parents[1],offline_test=True,reader=reader)
+    assert again.read(s,token,'audio1',project='M1',job='req')[0]==raw
+
+def test_missing_HTTP_credentials_have_authority_audit(private):
+    rig,b,assets,token,reader,path,raw,ref=private
+    with TestClient(assets.http_app()) as c:assert c.get('/audio1').status_code==403
+    with rig[0].tx() as db:assert any(json.loads(r[0])['kind']=='output_http_denied' for r in db.execute('SELECT payload FROM events'))
+    assert reader.calls==[]

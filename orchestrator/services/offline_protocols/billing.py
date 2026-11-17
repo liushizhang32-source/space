@@ -80,7 +80,8 @@ class ReconciliationConsumer:
                 if old['hash']!=fingerprint:
                     db.execute('INSERT INTO audit(kind,reference,detail) VALUES(?,?,?)',('CONFLICT',p['event_id'],fingerprint))
                     db.commit();raise Denied('EVENT_CONFLICT')
-                if old['state']=='ACK':return 'ACK'
+                # ACK is an inbox state, never a substitute for verifying the
+                # financial ledger via its original idempotent settle operation.
             else:db.execute('INSERT INTO inbox VALUES(?,?,?,?)',(p['event_id'],fingerprint,canonical(envelope).decode(),'PENDING'))
         # Original settle is transactional and receipt-idempotent. A crash here
         # leaves PENDING, so replay cannot create a second financial charge.

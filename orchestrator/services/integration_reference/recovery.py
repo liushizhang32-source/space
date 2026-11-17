@@ -5,7 +5,7 @@ Maintenance blocks both existing and newly opened Authority clients. Previous as
 roots are quarantined by rename, never deleted. No production keys/resources involved.
 """
 from pathlib import Path
-import hashlib,json,os,re,sqlite3,tempfile,uuid
+import hashlib,json,os,re,sqlite3,tempfile,uuid,time
 from contextlib import contextmanager
 from functools import wraps
 from .authority import Authority,Denied,require,canonical
@@ -28,6 +28,20 @@ def serialized(method):
 def write_new(path,raw):
     path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)
     with path.open('xb') as stream:stream.write(raw);stream.flush();os.fsync(stream.fileno())
+
+
+def replace_offline(source,target):
+    """Bounded Windows sharing retry; never suppress a persistent denial.
+
+    Callers retain existing path/reparse checks, maintenance and serialization.
+    No deletion, alternative path, privilege change or financial mutation here.
+    """
+    deadline=time.monotonic()+1.0
+    while True:
+        try:return os.replace(source,target)
+        except PermissionError as exc:
+            if getattr(exc,'winerror',None) not in {5,32,33} or time.monotonic()>=deadline:raise
+            time.sleep(.01)
 
 
 class CheckpointSource:
@@ -210,15 +224,15 @@ class JointSnapshot:
             with WindowsAssetReader._open(self.asset_root,directory=True):pass
             quarantine=self.asset_root.with_name(self.asset_root.name+'.before-restore-'+operation_id+'-'+uuid.uuid4().hex)
             require(quarantine.parent==parent and not quarantine.exists(),'RESTORE_PATH')
-            os.replace(self.asset_root,quarantine)
+            replace_offline(self.asset_root,quarantine)
         self._journal('RESTORE_PHASE',operation_id,phase='old_assets_quarantined')
         fault('old_assets_quarantined')
         require(staging.parent==self.asset_root.parent,'RESTORE_PATH')
-        os.replace(staging,self.asset_root)
+        replace_offline(staging,self.asset_root)
         self._journal('RESTORE_PHASE',operation_id,phase='assets_installed');fault('assets_installed')
         temp_db=self.path.with_name(self.path.name+'.restore-'+operation_id+'-'+uuid.uuid4().hex+'.tmp')
         require(temp_db.parent==self.path.parent,'RESTORE_PATH');write_new(temp_db,raw_db)
-        os.replace(temp_db,self.path)
+        replace_offline(temp_db,self.path)
         self._journal('RESTORE_PHASE',operation_id,phase='database_installed');fault('database_installed')
         require(self._checkpoint()==doc['state_sha256'],'SNAPSHOT_ROLLBACK')
         # Validate the installed state/files while all service operations remain gated.

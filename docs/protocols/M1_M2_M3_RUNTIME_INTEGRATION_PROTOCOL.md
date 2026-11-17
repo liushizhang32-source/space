@@ -60,7 +60,7 @@ deadline≤30秒，M1监管而非客户端超时断言；不明后端终态保�
 
 ## P3-14 恢复
 
-复用Authority/SharedFences/原快照，P1持久inbox重放，不把JSONL生成视作恢复完成；不重投未决。
+复用Authority/SharedFences/原快照，P1持久inbox重放，不把JSONL生成视作恢复完成；不重投未决。恢复的同路径原子replace仅对Windows临时共享错误5/32/33重试至1秒；持久拒绝仍抛错并保留maintenance/隔离，不删除数据或跳过安全校验。
 
 ## P3-15 Trace
 

@@ -93,6 +93,9 @@ class PrivateAssets:
                 require(header.startswith('Bearer ') and len(header)<=8192 and len(credential)<=8192,'MISSING_CREDENTIAL')
                 raw,mime=self.read(header[7:],credential,aid,project=request.headers.get('X-M1-Project',''),job=request.headers.get('X-M1-Job',''))
                 return Response(raw,media_type=mime,headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'})
-            except (ValueError,TypeError,KeyError):
+            except (ValueError,TypeError,KeyError) as exc:
+                try:
+                    with self.authority.tx() as db:self.authority.event(db,'output_http_denied',asset_id=aid[:64],reason=type(exc).__name__)
+                except (ValueError,TypeError):pass  # Authority unavailable: still deny, never read.
                 return JSONResponse(dict(code=1005,msg='Asset access denied',data=None,trace_id='tr_'+uuid.uuid4().hex),status_code=403,headers={'Cache-Control':'no-store'})
         return app

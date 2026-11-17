@@ -8,7 +8,7 @@ Date: 2026-11-17 (Asia/Hong_Kong)
 
 ## P2-01 单一权威
 
-PrivateAssets是原M1 Authority的输出资产适配层，共用原SQLite、签名令牌、grants、key revocation和clock；M2/M3不能自建权限表或签发服务。
+PrivateAssets是原M1 Authority的输出资产适配层，共用原SQLite、签名令牌、grants、key revocation和clock；原状态锚覆盖新增output_assets和revoked_output_jobs的行，篡改拒绝。M2/M3不能自建权限表或签发服务。
 
 ## P2-02 身份验证
 
@@ -52,7 +52,7 @@ asset_access令牌只包含一个登记asset的SHA及原attempt；复用assets.r
 
 ## P2-12 静态访问
 
-主应用和独立TTS旧/audios等继续原M1 blocked/显式demo规则，不把私有目录挂裸StaticFiles。私有资源只从显式注入的同一M1适配器挂载/_m1/assets/{asset_id}读取。
+主应用和独立TTS旧/audios等继续原M1 blocked/显式demo规则，不把私有目录挂裸StaticFiles。私有资源只从显式注入的同一M1适配器挂载/_m1/assets/{asset_id}读取。注入私有profile时主/独立工厂必须local+blocked，拒绝与offline_mock静态根混用；原无私有适配器的合法demo保持。内部读取条款指发布后的消费，受控生成者在自己的Attempt临时目录内的既有处理仍由原Session/Gate授权。
 
 ## P2-13 TTS和Video
 

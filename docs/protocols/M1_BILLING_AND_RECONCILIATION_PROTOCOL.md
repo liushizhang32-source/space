@@ -44,7 +44,7 @@ M3原回执形状保持；先验证Attempt ID/project/page/job/resultSHA与账�
 
 ## P1-10 幂等消费
 
-持久inbox以event_id唯一，记录规范payload hash；同ID同hash重放，异hash冲突隔离且不改原事件；receipt唯一由原账本再防重。
+持久inbox以event_id唯一，记录规范payload hash；同ID同hash重放，异hash冲突隔离且不改原事件；receipt唯一由原账本再防重。ACK仅为收件状态，重放仍由原Authority.settle核验资金终态，不能用ACK代替原账本。
 
 ## P1-11 冲突
 

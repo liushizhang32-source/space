@@ -53,6 +53,17 @@ def test_crash_after_financial_commit_recovers_once(billing):
     assert reopened.recover()==1 and reopened.recover()==0
     assert rig[0].totals()['spent']==200 and rig[0].totals()['held']==0
 
+def test_inbox_ACK_cannot_substitute_for_financial_ledger(billing,monkeypatch):
+    rig,b,ad,c,e=billing;original=rig[0].settle
+    def interrupt(*args):raise RuntimeError('before financial transaction')
+    monkeypatch.setattr(rig[0],'settle',interrupt)
+    with pytest.raises(RuntimeError):c.consume(e)
+    with c.db() as db:db.execute("UPDATE inbox SET state='ACK'")
+    assert rig[0].totals()['spent']==0 and rig[0].totals()['held']==1000
+    monkeypatch.setattr(rig[0],'settle',original)
+    c.consume(e)
+    assert rig[0].totals()['spent']==200 and rig[0].totals()['held']==0
+
 def test_concurrent_delivery_single_charge(billing):
     rig,b,ad,c,e=billing
     with ThreadPoolExecutor(max_workers=4) as pool:assert list(pool.map(lambda _:c.consume(e),range(4)))==['ACK']*4
