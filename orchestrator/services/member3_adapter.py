@@ -5,6 +5,8 @@ import os
 import shutil
 import tempfile
 import json
+import inspect
+from contextlib import nullcontext
 from urllib.parse import urlsplit
 from dataclasses import dataclass
 from pathlib import Path
@@ -59,12 +61,14 @@ class DeferredTTS:
 
 
 class Member3Adapter:
-    def __init__(self, storage, m1_session_factory=None):
+    def __init__(self, storage, m1_session_factory=None,m1_publisher=None):
         self.storage = storage
         self.fixture_factory = fixed_visual
         self.client_factory = TTSClient
         # Trusted in-process M1 owner supplies sessions. No HTTP token issuance.
         self.m1_session_factory = m1_session_factory
+        self.factory_can_cancel=m1_session_factory is not None and 'cancelled' in inspect.signature(m1_session_factory).parameters
+        self.m1_publisher=m1_publisher
 
     def session(self, page_id, job_id):
         return Member3Session(self, page_id, job_id)
@@ -74,6 +78,9 @@ class Member3Session:
     def __init__(self, adapter, page_id, job_id):
         self.adapter = adapter
         self.storage = adapter.storage
+        config=self.storage.settings
+        if adapter.m1_session_factory is None and (config.deployment_env!='local' or config.asset_mode!='offline_mock'):
+            raise APIError(1005,'成员3需要M1授权会话；演示仅允许显式local offline_mock')
         self.page_id = page_id
         self.job_id = job_id
         self.m1 = None
@@ -89,7 +96,11 @@ class Member3Session:
             # Explicit construction never reads .env, LLM_*, TTS_HTTP_URL or credentials.
             self.settings = MemberSettings(data_dir=self.root, asset_base_url=config.asset_base_url,
                 ffmpeg_path=config.ffmpeg_path, ffprobe_path=config.ffprobe_path,
-                tts_engine='silent', safety_enabled=True, safety_blocklist=config.safety_blocklist,
+                video_font=config.video_font,
+                tts_engine=config.member3_tts_engine,tts_http_url=config.member3_tts_http_url,
+                tts_api_key=config.member3_tts_api_key,llm_base_url=config.member3_llm_base_url,
+                llm_model=config.member3_llm_model,llm_api_key=config.member3_llm_api_key,
+                safety_enabled=True, safety_blocklist=config.safety_blocklist,
                 max_retry=1, retry_backoff_sec=0, video_timeout_sec=60)
             self.settings.ensure_dirs()
             self.inputs = {}
@@ -126,6 +137,8 @@ class Member3Session:
             raise APIError(int(exc.code), exc.msg) from exc
 
     def _step(self, stage, age_level):
+        if self.adapter.m1_session_factory is not None:
+            return self._authorized_step(stage, age_level)
         if stage == 'ocr':
             with self.storage.lock:
                 self.page = self.storage.pages[self.page_id].copy()
@@ -133,8 +146,6 @@ class Member3Session:
                 if not source.is_file():
                     raise APIError(1003, '原始图片不存在')
                 shutil.copy2(source, self.settings.uploads_dir/source.name)
-        if self.adapter.m1_session_factory is not None:
-            return self._authorized_step(stage, age_level)
         if stage in ('ocr', 'vlm'):
             cls = OCRData if stage == 'ocr' else VLMData
             model = cls.model_validate(self.adapter.fixture_factory(stage, self.page))
@@ -186,17 +197,22 @@ class Member3Session:
         raise ValueError(stage)
 
     def _authorized_step(self, stage, age_level):
-        if stage in ('ocr', 'vlm'):
-            # M1 owns these inputs; do not run fixture vision in authorized mode.
-            return Outcome()
-        if stage == 'story':
-            self.m1 = self.adapter.m1_session_factory(
-                page_id=self.page_id, job_id=self.job_id,
-                request_id=f'{self.job_id}:{self.page_id}')
+        if stage == 'ocr':
+            with self.storage.lock:self.page=self.storage.pages[self.page_id].copy()
+            options=dict(page_id=self.page_id, job_id=self.job_id,request_id=f'{self.job_id}:{self.page_id}')
+            if self.adapter.factory_can_cancel:options['cancelled']=self.cancelled
+            self.m1 = self.adapter.m1_session_factory(**options)
             inputs = self.m1.inputs()
             source = self.settings.uploads_dir / Path(self.page['original']).name
-            if hashlib.sha256(source.read_bytes()).digest() != hashlib.sha256(inputs['image.bin']).digest():
+            if self.page.get('original_sha256') != hashlib.sha256(inputs['image.bin']).hexdigest():
                 raise APIError(1002, '授权原图与捕获页面不一致')
+            source.write_bytes(inputs['image.bin'])
+            return Outcome()
+        if stage == 'vlm':
+            self.m1.ensure_page(self.page_id)
+            return Outcome()
+        if stage == 'story':
+            inputs = self.m1.inputs()
             result = member3_pipeline.run_page(
                 self.page_id, age_level, self.settings, make_video=False,
                 tts_client=self.adapter.client_factory(self.settings),
@@ -285,6 +301,18 @@ class Member3Session:
         return receipt
 
     def publish(self):
+        if self.m1 is None:
+            return self._publish()
+        from orchestrator.services.offline_protocols.publication import generation_publication
+        from orchestrator.services.integration_reference.authority import Denied
+        from orchestrator.services.vision_supervisor.supervisor import Cancelled
+        try:
+            with generation_publication(self.m1):urls=self._publish()
+            return self.adapter.m1_publisher(self) if self.adapter.m1_publisher is not None else urls
+        except (Denied,Cancelled) as exc:
+            raise APIError(1005,'M1拒绝已撤销或失效的最终发布') from exc
+
+    def _publish(self):
         """Called on the event loop only after worker success/cancellation checks.
 
         Atomic per file; URLs are exposed only after every selected file is copied.

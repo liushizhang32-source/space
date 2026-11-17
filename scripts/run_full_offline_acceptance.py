@@ -7,7 +7,8 @@ import argparse,hashlib,json,os,pathlib,shutil,subprocess,sys,time,xml.etree.Ele
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--output',required=True);parser.add_argument('--phase',choices=['unit','full'],default='full')
-    parser.add_argument('--extra-site',action='append',default=[]);args=parser.parse_args()
+    parser.add_argument('--extra-site',action='append',default=[])
+    parser.add_argument('--require-no-skips',action='store_true');args=parser.parse_args()
     W=pathlib.Path(__file__).resolve().parents[1];O=pathlib.Path(args.output).resolve()
     assert not O.is_relative_to(W),'Evidence must remain outside source checkout'
     O.mkdir(parents=True,exist_ok=True)
@@ -19,8 +20,11 @@ def main():
     env={k:v for k,v in os.environ.items() if k.upper() in {'SYSTEMROOT','WINDIR','COMSPEC','PATH','PATHEXT','TEMP','TMP','USERPROFILE','APPDATA','LOCALAPPDATA','PROGRAMFILES','PROGRAMFILES(X86)','SYSTEMDRIVE','NUMBER_OF_PROCESSORS'}}
     parent=W.parent
     env.update(PYTHONUTF8='1',PYTHONIOENCODING='utf-8',PYTHONDONTWRITEBYTECODE='1',PYTEST_DISABLE_PLUGIN_AUTOLOAD='1',M1_DEPLOYMENT_ENV='local',M1_ASSET_MODE='offline_mock',TTS_ENGINE='silent',PYTHONPATH=os.pathsep.join([str(guard),str(W)]),MISSION_EVIDENCE=str(O),CLOSURE004_EVIDENCE=str(O),JOINT_SECURITY_EVIDENCE_DIR=str(O/'main-http'),SCHEMA_REPO_ROOT=str(W),
-        FFMPEG_PATH=str(parent/'.venv-schema-tests/Lib/site-packages/imageio_ffmpeg/binaries/ffmpeg-win-x86_64-v9.0.2.exe'),FFPROBE_PATH=str(parent/'module-review-20261109/member3-pr-review/tools/ffprobe.exe'),VIDEO_FONT='C:/Windows/Fonts/msyh.ttc')
+        FFMPEG_PATH=os.environ.get('FFMPEG_PATH') or shutil.which('ffmpeg') or '',FFPROBE_PATH=os.environ.get('FFPROBE_PATH') or shutil.which('ffprobe') or '',VIDEO_FONT=os.environ.get('VIDEO_FONT',''))
+    if not all(pathlib.Path(env[name]).is_file() for name in ['FFMPEG_PATH','FFPROBE_PATH','VIDEO_FONT']):
+        raise ValueError('Declare readable FFMPEG_PATH, FFPROBE_PATH and VIDEO_FONT; no developer-machine fallback')
     groups=[('protocols',[str(p.relative_to(W)) for p in sorted((W/'orchestrator/tests').glob('test_offline_*.py'))])]
+    groups.append(('unified',[str(p.relative_to(W)) for p in sorted((W/'orchestrator/tests').glob('test_unified_*.py'))]))
     copied=None
     if args.phase=='full':
         D=O/'m2-exact';copied={}
@@ -70,7 +74,8 @@ def main():
     suite.set('tests',str(len(seen)))
     for tag,attr in [('failure','failures'),('error','errors'),('skipped','skipped')]:suite.set(attr,str(sum(c.find(tag) is not None for c,_ in seen.values())))
     ET.ElementTree(all_suites).write(O/'M1_M2_M3_FULL_TEST_RESULTS.xml',encoding='utf-8',xml_declaration=True)
-    (O/'RUN_SUMMARY.json').write_text(json.dumps(dict(results=results,duplicate_cases_excluded=duplicates,aggregate_scope='overlapping groups deduplicated; raw group counts reported separately',status='PASS' if all(x['exit']==0 and x['source_match'] for x in results) else 'FAIL'),ensure_ascii=False,indent=2),encoding='utf-8')
-    return 0 if all(x['exit']==0 and x['source_match'] for x in results) else 1
+    passed=all(x['exit']==0 and x['source_match'] for x in results) and not (args.require_no_skips and int(suite.get('skipped')))
+    (O/'RUN_SUMMARY.json').write_text(json.dumps(dict(results=results,duplicate_cases_excluded=duplicates,aggregate_scope='overlapping groups deduplicated; raw group counts reported separately',require_no_skips=args.require_no_skips,status='PASS' if passed else 'FAIL'),ensure_ascii=False,indent=2),encoding='utf-8')
+    return 0 if passed else 1
 
 if __name__=='__main__':raise SystemExit(main())

@@ -24,7 +24,7 @@ M1安全/预算/资产权威，M2视觉Worker，M3Generation/媒体；ChatGPT独
 
 ## P4-05 Git
 
-新独立worktree和功能分支；保护原18及现有R3工作树；本轮不push/PR/merge/改保护/强推。
+新独立worktree和功能分支；保护既有工作树。原协议补全轮次不push/PR；后续统一集成任务已明确授权推独立集成分支、创建指向dev的统一PR。该授权不允许强推main、修改保护、绕过审核或在门槛未齐时合并。
 
 ## P4-06 指纹
 
@@ -44,7 +44,7 @@ M1安全/预算/资产权威，M2视觉Worker，M3Generation/媒体；ChatGPT独
 
 ## P4-10 PR审阅
 
-本轮不建PR；以后门槛满足才准备准确Head/Base/完整Diff和原始证据，不把旧CI归新Head。
+统一集成候选可建Draft PR供独立审核，绑定准确Head/Base/完整Diff和原始证据；真实验收/签认未齐时不能标合并就绪，不把旧CI归新Head。
 
 ## P4-11 合并
 

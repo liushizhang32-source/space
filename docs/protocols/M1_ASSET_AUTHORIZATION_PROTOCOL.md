@@ -81,3 +81,5 @@ P2-V01合法音频/视频；V02缺凭证/跨项目/错job/过期；V03任务/令
 ## P2-19 责任
 
 M1维护原Authority及本适配；M3负责接线/输出；M2只产视觉候选。生产接入必须独立审核此PROPOSED协议。
+
+统一集成本地profile可为已登记audios/json/videos路径提供兼容别名：从原asset_access令牌取精确Asset ID，再核对服务端path/project/job，最终调用同一read方法；缺凭据维持503拒绝，其他拒绝403。不暴露任意路径读取，也不改变默认主/独立工厂的静态blocked行为。

@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from contextlib import nullcontext
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -15,7 +16,7 @@ from orchestrator.services.jobs import Jobs
 from orchestrator.services.storage import Storage
 
 
-def create_app(settings: Settings | None = None, *, m1_session_factory=None, m1_assets=None) -> FastAPI:
+def create_app(settings: Settings | None = None, *, m1_session_factory=None, m1_assets=None, m1_publisher=None, m1_runtime_guard=None) -> FastAPI:
     settings = settings or Settings()
     storage = Storage(settings)
     if settings.generation_backend == 'member3':
@@ -26,11 +27,12 @@ def create_app(settings: Settings | None = None, *, m1_session_factory=None, m1_
 
     @asynccontextmanager
     async def lifespan(app):
-        app.state.jobs = (jobs_class(storage, m1_session_factory=m1_session_factory)
-                          if m1_session_factory is not None and settings.generation_backend == 'member3'
-                          else jobs_class(storage))
-        yield
-        await app.state.jobs.close()
+        with m1_runtime_guard() if m1_runtime_guard is not None else nullcontext():
+            app.state.jobs = (jobs_class(storage, m1_session_factory=m1_session_factory,m1_publisher=m1_publisher)
+                              if m1_session_factory is not None and settings.generation_backend == 'member3'
+                              else jobs_class(storage))
+            try:yield
+            finally:await app.state.jobs.close()
 
     app = FastAPI(title='纸书智伴 Orchestrator Mock', version='1.0', lifespan=lifespan)
     app.state.storage = storage

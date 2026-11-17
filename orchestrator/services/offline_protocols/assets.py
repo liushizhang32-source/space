@@ -85,7 +85,8 @@ class PrivateAssets:
         with self.authority.tx() as db:
             db.execute('INSERT OR IGNORE INTO revoked_output_jobs VALUES(?,?)',(project,job))
             self.authority.event(db,'output_task_revoked',project=project,job=job)
-    def http_app(self):
+    def http_app(self,*,path_prefix=None):
+        require(path_prefix in {None,'audios','json','videos'},'OUTPUT_PATH')
         app=FastAPI(docs_url=None,redoc_url=None,openapi_url=None)
         @app.get('/{aid}')
         async def fetch(aid:str,request:Request):
@@ -93,6 +94,14 @@ class PrivateAssets:
             try:
                 header=request.headers.get('Authorization','');credential=request.headers.get('X-M1-Asset-Token','')
                 require(header.startswith('Bearer ') and len(header)<=8192 and len(credential)<=8192,'MISSING_CREDENTIAL')
+                if path_prefix is not None:
+                    name=safe_name(path_prefix+'/'+aid)
+                    with self.authority.tx() as db:
+                        token=self.authority._token(db,credential,'asset_access')
+                        allowed=json.loads(token['assets']);require(len(allowed)==1,'ASSET_SCOPE')
+                        rows=db.execute('SELECT asset_id FROM output_assets WHERE asset_id=? AND project=? AND job=? AND path=?',
+                            (next(iter(allowed)),request.headers.get('X-M1-Project',''),request.headers.get('X-M1-Job',''),name)).fetchall()
+                    require(len(rows)==1,'ASSET_SCOPE');aid=rows[0]['asset_id']
                 raw,mime=self.read(header[7:],credential,aid,project=request.headers.get('X-M1-Project',''),job=request.headers.get('X-M1-Job',''))
                 return Response(raw,media_type=mime,headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','X-Trace-ID':trace})
             except (ValueError,TypeError,KeyError) as exc:
@@ -100,5 +109,6 @@ class PrivateAssets:
                     with self.authority.tx() as db:self.authority.event(db,'output_http_denied',asset_id=aid[:64],reason=type(exc).__name__)
                 except (ValueError,TypeError):pass  # Authority unavailable: still deny, never read.
                 payload=APIResponse[dict](code=1005,msg='Asset access denied',trace_id=trace).model_dump(mode='json')
-                return JSONResponse(payload,status_code=403,headers={'Cache-Control':'no-store','X-Trace-ID':trace})
+                status=503 if path_prefix is not None and not request.headers.get('Authorization') else 403
+                return JSONResponse(payload,status_code=status,headers={'Cache-Control':'no-store','X-Trace-ID':trace})
         return app

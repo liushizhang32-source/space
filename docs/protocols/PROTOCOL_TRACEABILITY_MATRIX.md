@@ -2,6 +2,8 @@
 
 Version 1.0 / PROPOSED。测试文件按规则组执行正反向向量，不以同一句断言重复充数。
 
+统一集成补充：P2输出别名和P3最终发布/恢复接线由orchestrator/local_runtime.py、orchestrator/services/offline_protocols/publication.py实现，测试orchestrator/tests/test_unified_runtime.py；P4准确Head CI在.github/workflows/unified-acceptance.yml执行原完整入口并要求零skip。冻结规范原字节不改。
+
 |条款|冻结约束|新协议|Schema|源码|测试|责任|
 |---|---|---|---|---|---|---|
 |P1-01|冻结V1.0 F01–F08优先、无wire变更|M1_BILLING_AND_RECONCILIATION_PROTOCOL.md|BILLING_EVENT_SCHEMA.json|orchestrator/services/offline_protocols/billing.py|orchestrator/tests/test_offline_billing.py|M1|
