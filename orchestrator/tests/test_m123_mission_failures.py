@@ -69,13 +69,19 @@ def test_actual_M2_chain_fault_boundaries(tmp_path,monkeypatch,fault):
         elif fault=='tts':
             assert job['pages'][0]['status']=='partial'
             assert 'no_audio' in job['pages'][0]['degraded']
-        elif fault=='video':assert job['status']=='failed'
+        elif fault=='video':
+            # Existing rendering contract retains a submitted Story on ordinary
+            # video failure (test_member3_integration.py); safety failure differs.
+            assert job['status']=='partial_failed'
+            assert job['pages'][0]['video_url'] is None
+            assert job['pages'][0]['error']['code']==3007
+            assert 'no_video' in job['pages'][0]['degraded']
         elif fault=='cancel':assert job['status']=='cancelled'
         else:assert job['status']=='done' and len(sessions)==1
         assert rig.authority.totals()['spent']==0
         if fault in {'tts','video','cancel','duplicate'}:assert rig.authority.totals()['held']==1000
         path=tmp_path/'data/json/book01_p03_story.json'
-        if fault in {'tts','duplicate'}:
+        if fault in {'tts','video','duplicate'}:
             assert hashlib.sha256(path.read_bytes()).hexdigest()==sessions[0].attempt.result_sha256
         else:assert not path.exists()
         denied=client.get('/json/book01_p03_story.json')
