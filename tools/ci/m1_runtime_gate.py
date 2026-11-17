@@ -18,6 +18,40 @@ import uuid
 from groups import GROUPS, green, junit_counts
 
 
+def verify_runtime_sources(target):
+    """Retain original kit provenance; only two enumerated offline patches.
+
+    A proposal is not an owner signature. It permits CI of the candidate while
+    binding every changed byte and preserving the original archive manifest.
+    """
+    original=(target/'docs/m1-ci-runtime/source-audit.json').read_bytes()
+    files=json.loads(original)['files']
+    proposed=target/'docs/protocols/M1_RUNTIME_PROPOSED_SOURCE_SHA256.json'
+    changes={}
+    if proposed.exists():
+        p=json.loads(proposed.read_bytes())
+        if set(p)!={'version','status','scope','base_source_audit_sha256','changes'} or p['version']!='1.0' or p['status']!='PROPOSED' or p['scope']!='CI_ONLY':
+            raise ValueError('M1 candidate source profile invalid')
+        if hashlib.sha256(original).hexdigest()!=p['base_source_audit_sha256']:
+            raise ValueError('M1 original source audit changed')
+        changes=p['changes']
+        allowed={'orchestrator/services/integration_reference/authority.py',
+                 'orchestrator/services/integration_reference/recovery.py'}
+        if set(changes)!=allowed or not allowed.issubset(files):
+            raise ValueError('M1 candidate source patch inventory invalid')
+        for name,change in changes.items():
+            if set(change)!={'before_sha256','after_sha256','reason'} or change['before_sha256']!=files[name] or not change['reason']:
+                raise ValueError('M1 source baseline mismatch: '+name)
+            if type(change['after_sha256']) is not str or len(change['after_sha256'])!=64 or any(x not in '0123456789abcdef' for x in change['after_sha256']):
+                raise ValueError('M1 candidate source SHA invalid')
+    for name,expected in files.items():
+        expected=changes.get(name,{}).get('after_sha256',expected)
+        if hashlib.sha256((target/name).read_bytes()).hexdigest()!=expected:
+            raise ValueError('M1 source mismatch: '+name)
+    return dict(status='CI_ONLY',proposal='PROPOSED' if changes else None,
+                original_files=len(files),original_unchanged=len(files)-len(changes),patched=len(changes))
+
+
 def main(argv=None):
     parser=argparse.ArgumentParser()
     parser.add_argument('--target',required=True,type=Path)
@@ -35,10 +69,7 @@ def main(argv=None):
             raise RuntimeError('Windows CPython 3.12 required; no fallback or skips')
         result['tested_sha']=subprocess.check_output(['git','-c','safe.directory='+target.as_posix(),
             '-C',str(target),'rev-parse','HEAD'],text=True).strip()
-        source=json.loads((target/'docs/m1-ci-runtime/source-audit.json').read_text(encoding='utf-8'))
-        for name, expected in source['files'].items():
-            if hashlib.sha256((target/name).read_bytes()).hexdigest()!=expected:
-                raise ValueError('M1 source mismatch: '+name)
+        result['source_audit']=verify_runtime_sources(target)
         for name in GROUPS['m1-runtime'][1]:
             if not (target/name).is_file():raise FileNotFoundError(name)
         tests=sorted(p.relative_to(target).as_posix() for p in (target/'orchestrator/tests').glob('test_m1_*.py'))
