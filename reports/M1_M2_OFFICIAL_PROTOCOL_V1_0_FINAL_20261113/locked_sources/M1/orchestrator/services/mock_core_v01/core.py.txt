@@ -1,0 +1,319 @@
+"""SQLite M1 mock lifecycle. Integer money; fail-closed unknown execution.
+
+One OS-locked scheduler per database, no remote execution/retry implementation.
+The public v1.0 Jobs and the existing process Supervisor are never replaced.
+"""
+from contextlib import contextmanager
+from dataclasses import asdict
+import hashlib
+import json
+import os
+from pathlib import Path
+import sqlite3
+import time
+import uuid
+
+from ..vision_supervisor.pipeline import AtomicStore
+
+STAGES = ('ocr', 'vlm', 'story', 'tts', 'video_submit', 'video_poll',
+          'video_download', 'video_validate', 'render')
+TERMINAL = {'done', 'failed', 'cancelled'}
+
+
+def encoded(value):
+    return json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False)
+
+
+def positive(value, zero=False):
+    if type(value) is not int or value < (0 if zero else 1):
+        raise ValueError('expected integer amount/time')
+    return value
+
+
+class Core:
+    def __init__(self, database, *, clock=None):
+        self.clock = clock or (lambda: time.time_ns() // 1_000_000)
+        self.path = Path(database).resolve()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.lock = self.path.with_suffix(self.path.suffix + '.lock').open('a+b')
+        self.db = None
+        try:
+            if os.name == 'nt':
+                import msvcrt
+                self.lock.seek(0)
+                if not self.lock.read(1):
+                    self.lock.write(b'0'); self.lock.flush()
+                self.lock.seek(0)
+                msvcrt.locking(self.lock.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.db = sqlite3.connect(self.path, isolation_level=None)
+            self.db.row_factory = sqlite3.Row
+            self.db.execute('PRAGMA foreign_keys=ON')
+            self.db.execute('PRAGMA journal_mode=WAL')
+            self.db.execute('PRAGMA synchronous=FULL')
+            version = self.db.execute('PRAGMA user_version').fetchone()[0]
+            if version not in (0, 1):
+                raise ValueError('unsupported internal database version')
+            self.db.executescript('''
+                CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY, data TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS active(scope TEXT, page TEXT, job TEXT UNIQUE REFERENCES jobs(id), PRIMARY KEY(scope,page));
+                CREATE TABLE IF NOT EXISTS events(job TEXT REFERENCES jobs(id), seq INTEGER, kind TEXT, at_ms INTEGER, PRIMARY KEY(job,seq));
+                CREATE TABLE IF NOT EXISTS accounts(scope TEXT, currency TEXT, ceiling INTEGER, reserved INTEGER, settled INTEGER, PRIMARY KEY(scope,currency));
+                CREATE TABLE IF NOT EXISTS ledger(key TEXT PRIMARY KEY, job TEXT REFERENCES jobs(id), kind TEXT, amount INTEGER, currency TEXT);
+                CREATE TABLE IF NOT EXISTS attempts(id TEXT PRIMARY KEY, job TEXT REFERENCES jobs(id), resource TEXT UNIQUE, state TEXT, client_exited INTEGER DEFAULT 0, backend_terminal_confirmed INTEGER DEFAULT 0, cost_known INTEGER DEFAULT 0);
+                PRAGMA user_version=1;
+            ''')
+            if self.db.execute('PRAGMA quick_check').fetchone()[0] != 'ok':
+                raise ValueError('database integrity failure')
+        except BaseException:
+            self.close()
+            raise
+
+    def close(self):
+        if self.db is not None:
+            self.db.close(); self.db = None
+        self.lock.close()  # OS releases ownership even on process death.
+
+    @contextmanager
+    def transaction(self):
+        self.db.execute('BEGIN IMMEDIATE')
+        try:
+            yield
+            self.db.execute('COMMIT')
+        except BaseException:
+            self.db.execute('ROLLBACK')
+            raise
+
+    def get(self, job):
+        row = self.db.execute('SELECT data FROM jobs WHERE id=?', (job,)).fetchone()
+        if row is None:
+            raise KeyError(job)
+        return json.loads(row[0])
+
+    def event(self, job, kind):
+        self.db.execute('INSERT INTO events SELECT ?,COALESCE(MAX(seq),0)+1,?,? FROM events WHERE job=?',
+                        (job, kind, self.clock(), job))
+
+    def save(self, job, kind):
+        job['updated_ms'] = self.clock()
+        self.db.execute('UPDATE jobs SET data=? WHERE id=?', (encoded(job), job['job_id']))
+        self.event(job['job_id'], kind)
+
+    def configure_budget(self, scope, currency, ceiling):
+        positive(ceiling)
+        if currency not in {'CNY', 'USD'} or not scope:
+            raise ValueError('explicit scope/currency required')
+        with self.transaction():
+            # Cannot silently reset existing balances/ceilings.
+            self.db.execute('INSERT INTO accounts VALUES(?,?,?,0,0)', (scope,currency,ceiling))
+
+    def create(self, scope, page, *, revision=1, age='3-6', config='mock-v01',
+               deadline_ms, reserve=1, currency='CNY', force=False, mode='mock'):
+        import re
+        positive(revision); positive(deadline_ms); positive(reserve)
+        if (mode != 'mock' or age not in {'3-6','6-9'} or not scope or not config
+                or not re.fullmatch(r'[a-z][a-z0-9]{3,11}_p[0-9]{2}', page)
+                or deadline_ms <= self.clock()):
+            raise ValueError('invalid internal mock request')
+        semantic = [revision,age,config,mode]
+        with self.transaction():
+            row = self.db.execute('SELECT job FROM active WHERE scope=? AND page=?', (scope,page)).fetchone()
+            old = self.get(row[0]) if row else None
+            if old and not force:
+                if old['semantic'] != semantic:
+                    raise ValueError('active request parameters conflict')
+                return old
+            unresolved=self.db.execute('SELECT j.data FROM attempts a JOIN jobs j ON j.id=a.job WHERE a.backend_terminal_confirmed=0').fetchall()
+            if any(json.loads(r[0])['scope']==scope and json.loads(r[0])['page_id']==page for r in unresolved):
+                raise ValueError('backend_execution_unconfirmed')
+            if old and self.db.execute('SELECT 1 FROM attempts WHERE job=? AND backend_terminal_confirmed=0', (old['job_id'],)).fetchone():
+                raise ValueError('backend_execution_unconfirmed')
+            account = self.db.execute('SELECT * FROM accounts WHERE scope=? AND currency=?', (scope,currency)).fetchone()
+            if not account or account['reserved'] + account['settled'] + reserve > account['ceiling']:
+                raise ValueError('budget admission rejected')
+            if old:
+                old['status'] = 'cancelled'; old['cancel_requested'] = True
+                self.save(old, 'force_cancel_requested')
+                self.db.execute('DELETE FROM active WHERE job=?', (old['job_id'],))
+            jid = 'mockjob_' + uuid.uuid4().hex
+            job = dict(job_id=jid, scope=scope, page_id=page, semantic=semantic, revision=revision,
+                       generation_id=uuid.uuid4().hex, epoch=1, status='queued', cancel_requested=False,
+                       deadline_ms=deadline_ms, created_ms=self.clock(), updated_ms=self.clock(),
+                       stages={s:'pending' for s in STAGES}, progress=0, manifest=None, error=None,
+                       mode='mock', currency=currency, reserve=reserve, released=0)
+            self.db.execute('INSERT INTO jobs VALUES(?,?)', (jid,encoded(job)))
+            self.db.execute('INSERT INTO active VALUES(?,?,?)', (scope,page,jid))
+            self.db.execute('UPDATE accounts SET reserved=reserved+? WHERE scope=? AND currency=?', (reserve,scope,currency))
+            self.db.execute('INSERT INTO ledger VALUES(?,?,?,?,?)', ('reserve:'+jid,jid,'reserve',reserve,currency))
+            self.event(jid,'created_mock')
+            return job
+
+    def check(self, job, generation, epoch):
+        if (job['status'] in TERMINAL or job['cancel_requested'] or job.get('error')=='execution_unconfirmed' or job['generation_id'] != generation
+                or type(epoch) is not int or job['epoch'] != epoch or self.clock() >= job['deadline_ms']
+                or self.clock() < job['created_ms']):
+            raise ValueError('terminal, expired, clock rollback or stale fencing')
+
+    def transition(self, jid, stage, state, generation, epoch):
+        with self.transaction():
+            j = self.get(jid); self.check(j,generation,epoch)
+            if stage not in STAGES or state not in {'running','ok','empty','failed','skipped'}:
+                raise ValueError('invalid stage/state')
+            prior = [j['stages'][s] for s in STAGES[:STAGES.index(stage)]]
+            current = j['stages'][stage]
+            if (state=='running' and (current!='pending' or any(s not in {'ok','empty'} for s in prior))
+                    or state in {'ok','empty','failed'} and current!='running'
+                    or state=='empty' and stage not in {'ocr','vlm'}
+                    or state=='skipped' and (current!='pending' or 'failed' not in prior)
+                    or stage=='render' and state=='ok' and j['manifest'] is None):
+                raise ValueError('illegal stage transition or unpublished render')
+            j['stages'][stage] = state; j['status'] = 'running'
+            j['progress'] = 100*sum(s in {'ok','empty','failed','skipped'} for s in j['stages'].values())//9
+            if state=='failed':
+                j['status']='failed'; j['error']='mock_stage_failed'
+                self.db.execute('DELETE FROM active WHERE job=?',(jid,))
+            if all(s in {'ok','empty'} for s in j['stages'].values()):
+                j['status']='done'; self.db.execute('DELETE FROM active WHERE job=?',(jid,))
+            self.save(j,'stage_'+stage+'_'+state)
+
+    def cancel(self, jid):
+        with self.transaction():
+            j=self.get(jid)
+            if j['status'] in TERMINAL:
+                return j
+            j['cancel_requested']=True; j['status']='cancelled'; j['manifest']=None
+            self.db.execute('DELETE FROM active WHERE job=?',(jid,))
+            self.save(j,'cancel_requested')
+            return j
+
+    def begin_attempt(self, jid, resource, generation, epoch):
+        with self.transaction():
+            j=self.get(jid); self.check(j,generation,epoch)
+            if not resource:
+                raise ValueError('explicit resource required')
+            if self.db.execute('SELECT 1 FROM attempts WHERE job=? AND backend_terminal_confirmed=0',(jid,)).fetchone():
+                raise ValueError('unresolved attempt cannot be retried')
+            aid='mockattempt_'+uuid.uuid4().hex
+            self.db.execute('INSERT INTO attempts(id,job,resource,state) VALUES(?,?,?,?)', (aid,jid,resource,'intent'))
+            self.event(jid,'mock_attempt_intent')
+            return aid
+
+    def fail(self, jid, stage, code):
+        with self.transaction():
+            j=self.get(jid)
+            if j['status'] in TERMINAL: return
+            j['status']='failed'; j['error']=str(code)
+            j['page_status']='blocked' if code==3004 else 'failed'
+            j['manifest']=None
+            if stage in STAGES: j['stages'][stage]='failed'
+            for s in STAGES:
+                if j['stages'][s]=='pending': j['stages'][s]='skipped'
+            j['progress']=100*sum(s in {'ok','empty','failed','skipped'} for s in j['stages'].values())//9
+            self.db.execute('DELETE FROM active WHERE job=?',(jid,))
+            self.save(j,'safety_blocked' if code==3004 else 'mock_failed')
+
+    def client_exited(self, aid):
+        with self.transaction():
+            row=self.db.execute('SELECT job FROM attempts WHERE id=?',(aid,)).fetchone()
+            if row is None: raise KeyError(aid)
+            self.db.execute('UPDATE attempts SET client_exited=1 WHERE id=?',(aid,))
+            self.event(row[0],'worker_client_exited')
+
+    def confirm_mock_terminal(self, aid, *, proof):
+        # This is only deterministic-fake settlement, NEVER real backend evidence.
+        if proof != {'mode':'mock','attempt_id':aid,'terminal':True} or type(proof.get('terminal')) is not bool:
+            raise ValueError('mock proof mismatch')
+        with self.transaction():
+            row=self.db.execute('SELECT * FROM attempts WHERE id=?',(aid,)).fetchone()
+            if not row or not row['client_exited']:
+                raise ValueError('client exit not observed')
+            self.db.execute('UPDATE attempts SET backend_terminal_confirmed=1,state=?,resource=NULL WHERE id=?', ('mock_terminal',aid))
+            self.event(row['job'],'mock_backend_terminal_confirmed')
+
+    def settle(self, jid, key, amount, *, attempt_id=None):
+        positive(amount,zero=True)
+        if not key: raise ValueError('dedupe key required')
+        with self.transaction():
+            j=self.get(jid)
+            if attempt_id is not None:
+                row=self.db.execute('SELECT job FROM attempts WHERE id=?',(attempt_id,)).fetchone()
+                if not row or row[0]!=jid: raise ValueError('settlement attempt mismatch')
+            old=self.db.execute('SELECT job,amount FROM ledger WHERE key=?',('settle:'+key,)).fetchone()
+            if old:
+                if tuple(old)!=(jid,amount): raise ValueError('settlement dedupe conflict')
+                return
+            self.db.execute('INSERT INTO ledger VALUES(?,?,?,?,?)',('settle:'+key,jid,'settle',amount,j['currency']))
+            self.db.execute('UPDATE accounts SET settled=settled+? WHERE scope=? AND currency=?',(amount,j['scope'],j['currency']))
+            if attempt_id is not None:
+                self.db.execute('UPDATE attempts SET cost_known=1 WHERE id=?',(attempt_id,))
+            self.event(jid,'cost_settled_mock')
+
+    def release(self, jid):
+        with self.transaction():
+            j=self.get(jid)
+            if j['status'] not in TERMINAL or self.db.execute('SELECT 1 FROM attempts WHERE job=? AND (backend_terminal_confirmed=0 OR cost_known=0)',(jid,)).fetchone():
+                raise ValueError('unresolved execution retains reservation')
+            if j['released']: return
+            self.db.execute('UPDATE accounts SET reserved=reserved-? WHERE scope=? AND currency=?',(j['reserve'],j['scope'],j['currency']))
+            self.db.execute('INSERT INTO ledger VALUES(?,?,?,?,?)',('release:'+jid,jid,'release',j['reserve'],j['currency']))
+            j['released']=j['reserve']; self.save(j,'budget_released')
+
+    def recover(self):
+        """Called only under OS ownership. No worker is restarted automatically."""
+        with self.transaction():
+            for row in self.db.execute('SELECT id FROM jobs').fetchall():
+                j=self.get(row[0])
+                if j['status'] in TERMINAL: continue
+                j['epoch']+=1
+                pending=self.db.execute('SELECT 1 FROM attempts WHERE job=? AND backend_terminal_confirmed=0',(j['job_id'],)).fetchone()
+                if self.clock()>=j['deadline_ms'] or self.clock()<j['created_ms']:
+                    j['status']='failed'; j['error']='deadline_or_clock'; self.db.execute('DELETE FROM active WHERE job=?',(j['job_id'],))
+                elif pending:
+                    j['error']='execution_unconfirmed'
+                    self.db.execute("UPDATE attempts SET state='unknown' WHERE job=? AND backend_terminal_confirmed=0",(j['job_id'],))
+                self.save(j,'restart_recovery')
+        return [self.get(r[0]) for r in self.db.execute('SELECT id FROM jobs')]
+
+    def publish(self, jid, record, fences, gate, c1, c2, size, documents, *, verify, fault=None):
+        j=self.get(jid); self.check(j,record.generation_id,record.epoch)
+        if (record.job_id!=jid or record.page_id!=j['page_id'] or record.input_revision!=j['revision']
+                or any(j['stages'][s] not in {'ok','empty'} for s in STAGES[:-1])
+                or j['stages']['render']!='running'
+                or self.db.execute('SELECT 1 FROM attempts WHERE job=? AND backend_terminal_confirmed=0',(jid,)).fetchone()):
+            raise ValueError('publication identity, stages or execution unresolved')
+        handoff=gate.accept(record,fences,c1,c2,size)  # unchanged raw safety/refs gate
+        docs=dict(documents)
+        docs.update({f'json/{record.page_id}_ocr.json':handoff.c1,
+                     f'json/{record.page_id}_vlm.json':handoff.c2,
+                     f'json/{record.page_id}_refs.json':handoff.sidecar})
+        from .mock import verify_mock
+        verify_mock(docs)  # Mandatory completeness/profile, even with a bad caller verifier.
+        # Private only. DB manifest is the sole visibility boundary for this core.
+        store=AtomicStore(self.path.parent/'private-mock-assets',fences)
+        manifest=store.publish(record,c2.identity,docs,verify=verify)
+        if fault: fault('files_before_db')
+        with self.transaction():
+            j=self.get(jid); self.check(j,record.generation_id,record.epoch)
+            if j['manifest'] is not None: raise ValueError('immutable manifest already published')
+            manifest['mode']='mock'; manifest['identity']=asdict(c2.identity)
+            manifest['manifest_sha256']=hashlib.sha256(encoded(manifest).encode()).hexdigest()
+            j['manifest']=manifest
+            j['stages']['render']='ok'; j['status']='done'; j['progress']=100
+            self.db.execute('DELETE FROM active WHERE job=?',(jid,))
+            self.save(j,'private_mock_manifest_published')
+        if fault: fault('db_after_publish')
+        return manifest
+
+    def read_assets(self, jid):
+        j=self.get(jid); manifest=j['manifest']
+        if manifest is None or j['cancel_requested']: return None
+        digest=manifest['manifest_sha256']
+        if hashlib.sha256(encoded({k:v for k,v in manifest.items() if k!='manifest_sha256'}).encode()).hexdigest()!=digest:
+            raise ValueError('manifest corruption')
+        root=self.path.parent/'private-mock-assets'/'bundles'/manifest['bundle']
+        contents={n:(root/n).read_bytes() for n in manifest['sha256']}
+        if any(hashlib.sha256(v).hexdigest()!=manifest['sha256'][n] for n,v in contents.items()):
+            raise ValueError('published asset corruption')
+        return manifest,contents

@@ -1,0 +1,109 @@
+"""REAL wall-clock acceptance; two separate 30-second attempts, no retries here.
+
+Use M1_CGROUP_ROOT on a delegated Linux cgroup-v2 host. Lack of containment is
+a failure, never an automatic skip or a weaker process-group implementation.
+"""
+import ctypes
+import json
+import os
+from pathlib import Path
+import select
+import sys
+import threading
+import time
+
+import pytest
+
+from orchestrator.services.vision_supervisor.supervisor import Fences, Supervisor, VisionError, WorkerSpec
+
+
+class ProcessWitness:
+    """Retained OS handle proves this actual process exited (not PID lookup)."""
+    def __init__(self, pid):
+        self.pid = pid
+        if os.name == 'nt':
+            from ctypes import wintypes as w
+            self.k = ctypes.WinDLL('kernel32', use_last_error=True)
+            self.k.OpenProcess.argtypes = [w.DWORD,w.BOOL,w.DWORD]
+            self.k.OpenProcess.restype = w.HANDLE
+            self.k.WaitForSingleObject.argtypes = [w.HANDLE,w.DWORD]
+            self.k.WaitForSingleObject.restype = w.DWORD
+            self.k.CloseHandle.argtypes = [w.HANDLE]
+            self.k.CloseHandle.restype = w.BOOL
+            self.handle = self.k.OpenProcess(0x100000, False, pid)
+            if not self.handle:
+                raise ctypes.WinError(ctypes.get_last_error())
+        else:
+            self.handle = os.pidfd_open(pid)
+
+    def exited(self):
+        if os.name == 'nt':
+            state = self.k.WaitForSingleObject(self.handle, 0)
+            assert state in {0,258}, state
+            return state == 0
+        return bool(select.select([self.handle],[],[],0)[0])
+
+    def close(self):
+        if os.name == 'nt':
+            self.k.CloseHandle(self.handle)
+        else:
+            os.close(self.handle)
+
+
+@pytest.mark.parametrize('mode', ['sleep','child'])
+def test_M1_S02_S03_real_30_seconds_os_process_tree_exit(tmp_path, mode):
+    fences = Fences()
+    record, _ = fences.begin('job-wallclock','book01_p03')
+    identity = fences.attempt(record)
+    events, errors, witnesses = [], [], []
+    supervisor = Supervisor(tmp_path/'work', audit=events.append,
+                            cgroup_root=os.environ.get('M1_CGROUP_ROOT'))
+    image = tmp_path/'image.png'
+    image.write_bytes(b'local fake input')
+    evidence = tmp_path/'pids.json'
+    fake = Path(__file__).parent/'fixtures/m1_vision_worker.py'
+    spec = WorkerSpec((sys.executable,'-I',str(fake.resolve()),'--mode',mode,
+                       '--evidence',str(evidence)), 'local-fixture')
+    def work():
+        try:
+            supervisor._once(record,fences,identity,'ocr',spec,image)
+        except BaseException as exc:
+            errors.append(exc)
+    started = time.monotonic()
+    thread = threading.Thread(target=work)
+    thread.start()
+    try:
+        end = time.monotonic()+8
+        while not evidence.exists():
+            assert time.monotonic() < end and thread.is_alive(), errors
+            record.cancel.wait(.01)
+        pids = json.loads(evidence.read_text())
+        for pid in pids.values():
+            if pid is not None:
+                witness = ProcessWitness(pid)
+                witnesses.append(witness)
+                assert not witness.exited(), 'Process must be observed alive before timeout'
+        assert len(witnesses) == (2 if mode == 'child' else 1)
+        thread.join(40)
+        elapsed = time.monotonic()-started
+        assert not thread.is_alive()
+        assert len(errors)==1 and isinstance(errors[0],VisionError) and errors[0].code==2002, errors
+        assert 30 <= elapsed < 40
+        assert all(w.exited() for w in witnesses)
+        assert record.worker_state == 'reaped'
+        assert list(supervisor.root.iterdir()) == []
+        assert [e['event'] for e in events] == ['started','reaped','cleaned']
+        observed = events[1]['member_exit_witness']
+        assert {w.pid for w in witnesses} <= set(observed)
+        assert observed and all(observed.values())
+        summary = dict(mode=mode, deadline=30, elapsed=elapsed, error_code=errors[0].code,
+                       process_count=len(witnesses), all_os_handles_signalled=True,
+                       workspace_empty=True, events=events)
+        out = Path(os.environ.get('M1_TEST_EVIDENCE_DIR',str(tmp_path)))
+        out.mkdir(parents=True,exist_ok=True)
+        (out/f'wallclock-{mode}.json').write_text(json.dumps(summary,indent=2),encoding='utf-8')
+    finally:
+        record.cancel.set()
+        thread.join(15)
+        for witness in witnesses:
+            witness.close()

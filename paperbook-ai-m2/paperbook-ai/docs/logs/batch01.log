@@ -1,0 +1,21 @@
+C:\Users\zhc\Documents\deepseek-harness\default-workspace\paperbook-ai\src\vision\backends\paddle_ocr.py:74: UserWarning: `lang` and `ocr_version` will be ignored when model names or model directories are not `None`.
+  self._engine = PaddleOCR(
+INFO: Could not find files for the given pattern(s).
+C:\Users\zhc\Documents\deepseek-harness\default-workspace\paperbook-ai\.venv\Lib\site-packages\paddle\utils\cpp_extension\extension_utils.py:712: UserWarning: No ccache found. Please be aware that recompiling all source files may be required. You can download and install ccache from: https://github.com/ccache/ccache/blob/master/doc/INSTALL.md
+  warnings.warn(warning_message)
+Creating model: ('PP-OCRv5_mobile_det', None, None)
+Model files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Users\zhc\Documents\deepseek-harness\default-workspace\paperbook-ai\models\.paddlex\official_models\PP-OCRv5_mobile_det`.
+Creating model: ('PP-OCRv5_mobile_rec', None, None)
+Model files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Users\zhc\Documents\deepseek-harness\default-workspace\paperbook-ai\models\.paddlex\official_models\PP-OCRv5_mobile_rec`.
+输入：C:\Users\zhc\Documents\deepseek-harness\default-workspace\paperbook-ai\data\books\batch01（4 页）
+后端：OCR=paddleocr VLM=qwen2.5-vl-http
+
+[warmup] paddleocr 预热 11088 ms
+
+[1/4] boom_p01       ok       2245ms blocks=6 CER=0.021
+[2/4] fern_p01       empty     388ms blocks=0
+[3/4] latin_p01      ok      22693ms blocks=93
+[4/4] sally_p19      ok        903ms blocks=5 CER=0.036
+
+成功率 100.0%　中位耗时 1574 ms　字准确率 97.33%
+报告：C:\Users\zhc\Documents\deepseek-harness\default-workspace\paperbook-ai\eval\batch01\report.md

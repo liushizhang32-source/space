@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-from agents.generation.config import Settings
-from agents.generation.pipeline import run_page
-from agents.generation.schemas import StoryDoc, VideoDoc
-from agents.generation.tts.client import TTSClient
+from orchestrator.vendor.member3_v116.agents.generation.config import Settings
+from orchestrator.vendor.member3_v116.agents.generation.pipeline import run_page
+from orchestrator.vendor.member3_v116.agents.generation.schemas import StoryDoc, VideoDoc
+from orchestrator.vendor.member3_v116.agents.generation.tts.client import TTSClient
 
 
 class FailingEngine:
     name = "failing"
 
     def synthesize(self, *args, **kwargs):
-        from agents.generation.errors import TTSFailed
+        from orchestrator.vendor.member3_v116.agents.generation.errors import TTSFailed
 
         raise TTSFailed("合成失败")
 

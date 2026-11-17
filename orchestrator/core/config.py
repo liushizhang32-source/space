@@ -13,12 +13,20 @@ class Settings:
     queue_delay: float = 0.2
     stage_delay: float = 0.3
     generation_backend: str = field(default_factory=lambda: os.getenv('GENERATION_BACKEND', 'mock'))
+    deployment_env: str = field(default_factory=lambda: os.getenv('M1_DEPLOYMENT_ENV', 'local'))
+    asset_mode: str = field(default_factory=lambda: os.getenv('M1_ASSET_MODE', 'blocked'))
     ffmpeg_path: str = field(default_factory=lambda: os.getenv('FFMPEG_PATH', 'ffmpeg'))
     ffprobe_path: str = field(default_factory=lambda: os.getenv('FFPROBE_PATH', 'ffprobe'))
     safety_blocklist: tuple[str, ...] = field(default_factory=lambda: tuple(
         term.strip() for term in os.getenv('SAFETY_BLOCKLIST', '').split(',') if term.strip()))
 
     def __post_init__(self):
+        if self.deployment_env not in {'local', 'dev', 'production'}:
+            raise ValueError('Invalid deployment environment')
+        if self.asset_mode == 'offline_mock' and self.deployment_env != 'local':
+            raise ValueError('Offline Mock assets require local isolated deployment')
+        if self.asset_mode not in {'blocked', 'offline_mock'}:
+            raise ValueError('Invalid asset mode; production asset release is BLOCKED')
         HttpUrl(self.asset_base_url)
         if self.generation_backend not in ('mock', 'member3'):
             raise ValueError('GENERATION_BACKEND must be mock or member3')

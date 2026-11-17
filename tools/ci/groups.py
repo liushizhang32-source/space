@@ -3,7 +3,8 @@ GROUPS = {
     'schema': (409, ['orchestrator/tests/test_schema_contract.py',
                      'orchestrator/tests/test_schema_round2.py']),
     'api': (42, ['orchestrator/tests/test_mock_api.py']),
-    'member134': (134, ['orchestrator/vendor/member3_v116/tests']),
+    # PR #10 retains all 134 existing tests and adds 50 M1 offline tests.
+    'member134': (184, ['orchestrator/vendor/member3_v116/tests']),
     'enhanced': (12, ['orchestrator/vendor/member3_v116/agents/generation',
                       'orchestrator/vendor/member3_v116/examples/book01_p03']),
     'integration': (21, ['orchestrator/tests/test_member3_integration.py']),
@@ -12,6 +13,9 @@ GROUPS = {
                    'orchestrator/services/member3_adapter.py']),
     'http': (12, ['orchestrator/main.py', 'orchestrator/services/member3_jobs.py',
                   'orchestrator/vendor/member3_v116/examples/book01_p03/book01_p03_orig.png']),
+    # Windows Job Objects are required by the unchanged M1 worker tests.
+    'm1-runtime': (242, ['orchestrator/tests/test_m1_integration_reference.py',
+                         'orchestrator/tests/test_m1_security_config.py']),
 }
 MEDIA = {'member134', 'enhanced', 'integration', 'http'}
 

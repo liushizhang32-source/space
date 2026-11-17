@@ -1,0 +1,201 @@
+# M1 → M2 V1.2 单次 Worker 交接说明
+
+日期：2026-11-11。状态：**M1 可测试框架交接版，私有 IPC/refs 协议候选；不是公共 API 更新，不是 M2 已完成适配声明。**
+
+## 1. 边界与实际基线
+
+本轮以项目负责人粘贴任务中明确批准的 M1 职责和冻结 `docs/API_v1.0.md` 为实现依据。根工作区的 U1 统一规范与 J1 联合决议仍标注待批准/未生效，不能把候选字段、文件落点或 SQLite 设计说成已经三方签认。下述私有协议须成员2确认可实现，字段有调整需求先报负责人，不改 C1/C2/API。
+
+独立工作区 `space-m1-m2-v12-supervisor`；分支 `integration/m1-m2-v12-supervisor`；基于本机 `origin/dev` 的 `0dc2844f910d0e37ae3ef0253d7838dea1f61bfb`。本轮未 fetch，不能据此声称远程仍停在此版本。现有 Jobs/Storage 是单进程内存状态；SQLite 目前是设计文档，没有引入第二套数据库。
+
+实际静态读取 M2 V1.2：`paperbook-ai-m2-v1.2-code.zip`，30个文件，71401字节，CRC通过；SHA256：
+
+```text
+cbba6b714f5618376576467d42b3bbccb16ffd9a2ef972ac60d32ef11a225e66
+```
+
+这与 V1.1.1 Revised 是不同交付物。未执行/安装/改写 ZIP 代码。V1.2 的 `src/vision/sidecar.py` 是共享 HTTP 服务，**不是**本协议的单次进程 Worker；HTTP Sidecar 与视觉实体 refs JSON 是两件不同的事。
+
+## 2. M1 提供
+
+- 为页分配 job、generation、input_revision、epoch；每次 attempt 使用新 attempt_id 和 fencing_token。
+- 注册可信 Worker 参数列表和安全来源标识。注册来自 M1 部署配置，不接受 Worker 自称可信；生产注册和程序指纹仍须部署审核，测试仅注册本地假 Worker。
+- 提供当前页的图片引用、M1 分配的私有输出路径；只把该 attempt 的目录作为 Worker cwd。
+- Windows 先以 suspended 状态创建进程，再加入不可 breakaway 的 Job Object，之后才恢复执行；Linux 需要可委派的 cgroup v2/cgroup.kill，不能以 setsid 代替强监管。
+- 每次 OCR/VLM attempt 独立30秒 monotonic 墙钟预算，包含启动、解释器/模型加载、执行与写结果。超时后终止整棵树并等待实际成员退出；排空/清理耗时不伪装为模型仍可运行的额外预算。
+- 最多两次 attempt；回收、清理成功之后退避1秒，再开始下一次。取消期间不重试。
+- 校验原始 C1/C2、原始 safety 布尔值、refs、generation/token/epoch/hash；只有通过才调用下游。
+- 冻结原字节快照交给下游，不让 M3 扫描“最新文件夹”。发布使用私有不可变 bundle 和单个原子指针；不把私有 bundle 根目录挂载为静态文件服务。
+
+M1 的 `Supervisor.close()` 是同步共享排空屏障。异步调用方须复用现有 `Member3Jobs.work` 的真实 executor Future + shield/drain 方式，不能把取消 asyncio 包装器当作进程退出。框架当前没有接到 HTTP 生命周期，禁止声称默认服务已启用此框架。
+
+## 3. M2 必须补交的入口
+
+M1 将以参数列表启动一个**只处理一次、只处理一个 stage 的进程**：
+
+```text
+[已审核的解释器绝对路径, M2单次Worker入口及固定参数..., request.json绝对路径]
+```
+
+M2 需要提供实际命令、入口文件及其指纹、安装依赖、退出码约定和说明。不得把共享 Sidecar 的 HTTP 请求包装成一个短命客户端，然后把后台模型留在共享服务里；不得为回收单页而杀共享 Sidecar。模型执行进程及其衍生进程必须处于本 attempt 的 OS 容器内，不能转发给无法撤销的外部常驻本地模型进程。
+
+Worker 不实现重试/排队/Job 状态机/进程监管，不继续使用另一套整页30秒预算；SDK 自带重试也必须关闭。M2 仍负责视觉算法、图片预处理、模型输出、安全判定与观测 refs。M1 不生成视觉属性或跨页角色身份。
+
+## 4. 输入候选格式 `m1-vision-worker/0.1`
+
+```json
+{
+  "protocol": "m1-vision-worker/0.1",
+  "job_id": "job-example",
+  "page_id": "book01_p03",
+  "generation_id": "M1生成的不透明标识",
+  "input_revision": 1,
+  "epoch": 1,
+  "attempt_id": "本次attempt标识",
+  "fencing_token": "本次租约标识",
+  "stage": "vlm",
+  "image_path": "由M1提供的本机图片绝对路径",
+  "result_path": "result.json",
+  "outputs": {
+    "c1": "json/book01_p03_ocr.json",
+    "c2": "json/book01_p03_vlm.json",
+    "sidecar": "json/book01_p03_refs.json"
+  }
+}
+```
+
+图片引用必须由调用侧绑定到该 input_revision，正式接线前还须确认 Capture 的不可变图片快照/修订管理；本框架不修改现有上传存储。内部 generation/token 不加入冻结 C1/C2，不加入 HTTP 必填字段。token 是并发隔离标识，不是 API 密钥，也不提供跨进程身份认证。
+
+## 5. 返回候选格式
+
+必须先完整落盘产物，最后写 `result.json`，然后退出。M1 **等整棵进程树退出以后**才读取它们。禁止发起脱离容器的后台任务。
+
+```json
+{
+  "protocol": "m1-vision-worker/0.1",
+  "identity": {
+    "job_id": "job-example",
+    "page_id": "book01_p03",
+    "generation_id": "与请求逐项一致",
+    "input_revision": 1,
+    "epoch": 1,
+    "attempt_id": "与请求一致",
+    "fencing_token": "与请求一致"
+  },
+  "code": 0,
+  "msg": "ok",
+  "artifacts": {
+    "c2": "json/book01_p03_vlm.json",
+    "sidecar": "json/book01_p03_refs.json"
+  }
+}
+```
+
+OCR 返回 `artifacts={"c1":"json/book01_p03_ocr.json"}`。VLM 必须恰好返回 c2、sidecar 两项。字段类型严格匹配，不把 bool 当 input_revision/epoch 的整数。文件必须在当前唯一目录中、非空、普通文件，无软链接/硬链接/junction/路径穿越。当前测试框架每个 IPC 文件有4MiB防护上限；这是**未投入正式 API 的框架限制**，不是已批准的业务文本/实体限额，正式接线前须确认合适的资源上限，不静默截断内容。
+
+失败返回相同 protocol/identity、整数 code、字符串 msg、布尔 `transient`；通常使用非零进程退出码。code=0 却非零退出一律拒绝。缺失/非法 envelope 作为契约错误，不伪造成功，也不重试契约错误。不能只靠 Worker 输出 `transient=true` 扩大冻结白名单。
+
+3001 只表示 OCR 未识别到文字：可以返回合法 C1(status=empty)，code=0；也支持显式 code=3001 + 实际合法 C1(empty)，M1保留 reported_code=3001、不重试，继续按 empty 处理。3001 缺失合法 C1 时拒绝，不由 M1虚构 C1。VLM 不得用3001表示安全错误。
+
+## 6. 重试与错误映射
+
+冻结 API §1.13 精确白名单为 `2001`（msg大小写不敏感地排除 safety）、`2002`、`2003`、`2004`、`3007`、`3008`。本视觉 Supervisor 只执行 OCR/VLM，采用其中 `2001/2002/2003/2004`，且要求确为瞬时错误。3007/3008仍是音视频语义，不拿它们重试视觉任务。
+
+1000系列、3001、3003、3004、3006、9001均不重试。取消/过期 generation 即使伴随2004也不重试。每次 attempt 30秒，最多两次，中间1秒退避；不是两次共用30秒，也不是 OCR+VLM 整页共用30秒。排空失败或目录清理失败停止重试，目录隔离保留，不能在旧树未退出时开始新 attempt。
+
+M2 V1.2当前冲突：
+
+|ZIP文件|位置|实际实现/待整改|
+|---|---|---|
+|src/vision/deadline.py|25–26、52–53、98–131|整页共享30秒、daemon线程等待超时，不能终止实际调用；需换为本单次入口，由M1监管|
+|src/vision/pipeline.py|30–33、181–186、213–216、272–276|内部deadline包装；安全拦截注释/实现使用3001，需纠正到3004，不改公共码含义|
+|src/vision/sidecar.py|MAX_REQUEST/_ALLOWED_TOP_KEYS及_analyze/_respond|共享ThreadingHTTPServer无generation/attempt/token字段，不能直接作为单次进程入口；不得擅加公共字段冒充已签认|
+|src/vision/cli.py|34–56、123–133|人工CLI调用run_page，未实现本次IPC握手；不能未经适配直接注册|
+
+## 7. safety 的发布门禁
+
+M1在 Pydantic 转换**之前**检查原始 C2 JSON：safety必须为对象，pass必须原生JSON bool且为true，flags类型合法。缺失、null、字符串“true”、数字1、false、来源不在M1注册信任集合、无法绑定当前generation均fail-closed。
+
+安全失败：M1 Page 状态为 blocked，error.code=3004；不调用 Story/TTS/Video，不发布正常 C2/refs或媒体。C2 status仍只有冻结的ok/empty，不新增blocked。过期 generation/cancel 只拒绝旧结果，不把替代任务一并阻断。
+
+VLM技术失败且拿不到可信独立安全结果，不得拿 OCR 内容、空对象或默认true充当安全放行。当前框架直接失败、不进入下游；若要启用安全可信的 no_scene 降级，必须先明确独立安全证据的绑定协议，不能从旧安全检查复制通过。
+
+## 8. refs候选协议 `vision_refs/0.1`
+
+Sidecar必须包含上述 identity 全部字段（含attempt_id）、schema_version、c2引用、source、observations。最小核心结构如下（哈希和标识由运行期计算/复制，不得照抄示例占位符）：
+
+```json
+{
+  "schema_version": "vision_refs/0.1",
+  "job_id": "job-example", "page_id": "book01_p03",
+  "generation_id": "运行期标识", "input_revision": 1, "epoch": 1,
+  "attempt_id": "运行期标识", "fencing_token": "运行期标识",
+  "c2": {
+    "asset_id": "M2产物标识", "schema_version": "1.0",
+    "relative_path": "json/book01_p03_vlm.json",
+    "sha256": "C2实际文件的64位小写SHA256"
+  },
+  "source": {
+    "component_mode": "fixture", "model_ref": "local-fake",
+    "prompt_sha256": "实际提示词/固定输入的64位小写SHA256",
+    "evidence_ref": "私有证据引用"
+  },
+  "observations": []
+}
+```
+
+有观测时每项包含：唯一observation_id、当前C2存在的object_id、appearance（仅clothing/visible_features）、visual_description、confidence、identity_status（unknown/ambiguous）、source_ref。confidence.value为0～1的有限数，kind=model_estimate；或value=null、kind=unavailable且calibrated=false。不能把bool当置信度数字。
+
+M1计算的是**原始落盘 C2 字节 SHA256**；不得重排JSON/重新序列化再哈希。路径必须是M1分配的当前相对路径。旧generation、旧token、错epoch、跨页object_id、错误哈希、路径穿越、重复observation_id均拒绝。M2不得在refs定义canonical_id/character_id/canonical_identity；角色识别与跨页归一仍由M3按签认后的边界实现。
+
+IPC目录用M1创建的随机唯一目录，当前不冒充已建立U1/J1规定的持久化层级。接线前须三方确认最终私有schema/version/路径及manifest登记方式。候选在本框架内严格验证，不意味着公共契约已冻结升级。
+
+## 9. 下游、发布与部署限制
+
+- `VisionPipeline.run(..., downstream=..., verify=...)` 先门禁，再传递不可变bytes快照；downstream是待正式接线的M1→M3调用点。本轮测试用本地spy，不声称真实M3 Planner已适配refs。
+- `verify`为必需的可信M1适配回调：正式接线必须执行StoryData校验、安全复核、实际音视频完整解码；不能使用Worker自报validated=true。原有Member3Adapter的媒体深度验证保持不动。
+- `AtomicStore`只公布完整bundle的一个原子指针，C2 hash与门禁快照不一致则拒绝。故障时不建立有效引用；私有bundle不能直接静态暴露。它没有替换API v1.0现有URL存储，也没有宣称多文件os.replace是一笔事务。
+- 当前是单M1进程、内存fencing；重启后不会把旧磁盘pointer当作当前有效产物。多副本、跨进程CAS、SQLite恢复与清理陈旧成功bundle需另行按批准后的持久化架构实施，不能用多worker部署此候选模块。
+- Windows已做真实30秒本机验收；Linux cgroup/pidfd分支未在Linux实测。部署需Linux提供可委派cgroup、cgroup.kill、pidfd、禁止Worker迁移出cgroup的权限边界、可靠的孤儿/zombie回收。默认没有delegation时直接失败，绝不降级成“HTTP超时=硬超时”。这不是网络沙箱；没有证明系统级完全断网。
+- 未向正式HTTP后端添加新选项、未修改默认Mock、API或Schema。接线与真实模型验收仍须单独批准。
+
+## 10. 成员2补交与联合验收清单
+
+1. 提供可独立启动的一次OCR或VLM入口，及完全对应的源码/指纹/测试；保留算法责任。
+2. 按本候选协议返回原始C1/C2、refs、错误与完整identity，或者提出精确协议差异供三方签认。
+3. 移除与M1冲突的内部整页daemon线程超时和自主重试；安全使用3004，3001保留OCR empty。
+4. 安全来源、generation绑定、字段原始类型、SDK子进程/外部服务模型执行范围必须可审核；不得偷偷将执行移到共享服务。
+5. 本地Fake/Stub测试不得依赖真实密钥；生产模型配置另行环境注入，不能把API Key写入源码、请求样例或公开日志。
+6. 联测M1-S01～S18、真实30秒树退出、OCR/VLM+C1/C2+refs+M3、正式URL发布、取消/force/并发；Linux部署再做Linux隔离验收。
+7. 由负责人批准U1/J1、最终IPC/refs路径、资源上限、持久化接线后，才申请启用正式服务。M1框架测试通过不等于M2 V1.2已通过联调，更不等于真实模型生产可用。
+
+
+## 第二轮增量交接（2026-11-11，优先于以上历史状态）
+
+本节为 M1 私有候选实现说明，不表示 M2/M3 已签认。实际读取本 checkout 的 docs/API_v1.0.md（C1/C2 §C1/§C2）及 orchestrator/schemas/ocr.py；公共字段保持不变。另读取资料根目录 docs 下 J1、U1、G0 三份文件，它们是只读外部基线，不属于当前 HEAD；D1—D7方向确认不等于 Sidecar 最终 schema/version/path 批准。
+
+### C1 / worker input-output
+
+M1 OCR 输出 Snapshot 保存原字节、c1_sha256、image_sha256、七元 identity。VLM 前检查冻结 OCRData、页身份、C1 字节 hash、图片 hash 及 job/page/generation/input_revision/epoch；缺失或不匹配返回私有 VisionError(1002)，启动数为0。Pipeline 先检查原图尺寸，再将 C1 原字节写入新的 VLM attempt/c1.json；inputs.c1 是该文件绝对路径。c1_binding.identity 是 OCR identity，c1_binding.sha256/image_sha256 为原字节绑定。图片也复制到每次 attempt/input.<原扩展名>，image_path 指向副本。源图两阶段间改变将拒绝；Capture 修订注册及图像解码仍未接入本框架，不能宣称已验证真实 Capture 全链路。
+
+M2 必须确认上述 inputs.c1 的消费方式并验证绑定，不得在缺失时内部重复 OCR。不得把私有 binding 加入冻结 C1。现有 M2 候选忽略 revision/hash 的行为仍为接口差异。worker protocol 仍为 m1-vision-worker/0.1：request 顶层 identity、stage、image_path、result_path、outputs；result identity 嵌套、code/msg/transient/artifacts，OCR 恰 C1、VLM 恰 C2+sidecar。路径及 result/exit 语义沿用前文；新增绑定字段仍需 M2 确认，未宣称兼容其 vision_worker 候选。
+
+### Sidecar 差异及阻塞
+
+C2 原字节 SHA256、page/generation/token/epoch、object_id 关联严格保留。当前 gate 是候选严格 profile，非正式冻结协议：M1 顶层 identity vs M2 嵌套 identity；M1 clothing 字符串 vs M2 null；M1 calibrated bool vs M2 正常置信缺字段。confidence kind/value/calibrated、component_mode（与 source_mode 命名差异）、来源可信注册、prompt_sha256 是完整渲染 prompt 还是模板 hash、最终 version/path 均待 M1/M2/M3 和负责人签认。M1 不替 M2 补 calibrated、不伪造置信或 prompt hash、不放宽关联门禁。候选负例通过不代表正式协议已获批。
+
+### 环境及目录
+
+WorkerSpec.environment 为 M1 部署配置逐项键值对（repr 隐藏），允许且仅允许 VISION_BACKEND / VISION_MODEL / VISION_BASE_URL / VISION_API_KEY；这些是候选注入名称，M2 需提交实际需求后逐键评审。VISION_EMIT_EXTRA、未知键、重复键拒绝；父环境 VISION_* 不继承。系统环境仅四个 Windows 系统键加固定 PATH/编码；TEMP/TMP/TMPDIR、HOME/USERPROFILE/XDG_CACHE_HOME/HF_HOME/PADDLE_HOME 指向 attempt 私有目录。无共享只读缓存获准配置；第三方库是否遵守这些键尚未真实验证，不能声称所有 SDK 写入都局限于 attempt。stdout/stderr 丢弃到空设备，避免 SDK 将密钥写入 worker.log；错误只用受控结构化结果。不是网络隔离沙箱。
+
+### 后端单请求取消能力（M1 私有候选）
+
+WorkerSpec.execution_scope 默认 process_tree，只能注册经审查确认真实计算位于该树的本地 Worker；HTTP 常驻服务必须显式注册 http_service 及 M1 trusted backend adapter。adapter.task_reference(identity) 必须在 launch 前取得真实单请求 task ref，并确保 Worker 执行的正是该任务（不能伪造 UUID 充当后端 ref）；当前没有 M2 实现，禁止注册为生产能力。
+
+adapter.settle(identity, task_ref, cancel=bool) 返回 identity/task_ref/request_result/termination_confirmed/confirmed_at。M1 记录 requested_at、cancel_requested 及 status，时间为 Unix 秒；取消只接受 request_result=cancelled 且终止确认，正常结束只接受 completed/cancelled 确认，时间戳必须在本次请求至回执范围。adapter 异常/缺证明/失败/旧 attempt 不能算成功。M1 backend_execution_unconfirmed 用现有9001及私有状态表达，非新公共码；禁止自动重试、公开发布及同页 force 替换。晚到回执不能重新激活该结果。
+
+本地 kill/wait/reap 独立证明 Worker 树退出，绝不证明 HTTP 服务实际计算停止。M2 需提供服务端 task ref、合作取消端点与实际终止证明，以及注册/提交与 Worker 的原子绑定方案、有限时 settle（必须在约定回收预算内返回）。当前 adapter 回调是同步接口，没有不可信网络调用的超时监管；此能力未部署，也未真实 HTTP 验收，保持阻塞。Mock 只能验证接口状态机。
+
+### 下游与验收
+
+M3 仍只能消费经 gate 接受的不可变 C1/C2/refs snapshot，不扫描临时目录。待提供正式 Sidecar 签认、M2 C1 消费与真实取消能力、环境需求及联合进程结果后再验收。此版本可供接口评审，不能作为稳定交付或 dev 准入依据。

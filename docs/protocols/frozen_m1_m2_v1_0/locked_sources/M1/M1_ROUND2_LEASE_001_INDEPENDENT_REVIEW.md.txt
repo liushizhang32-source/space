@@ -1,0 +1,292 @@
+# M1 Round 2 LEASE-001 独立复审
+
+日期：2026-11-12（Asia/Hong_Kong）。对象：`C:/Users/16173/Documents/ChatGPT/人工智能+/space-m1-m2-v12-supervisor`。
+
+## 裁决
+
+**不接受 LEASE-001 整体“候选 Mock 本地关闭”：启动前失败的原反例已修复，但发现一个新的 P2 提交租约重取缺口。原三个 P1 的候选 Mock 本地关闭结论保持。禁止 M1/M4 Mock 联调；禁止生产接线。**
+
+本轮实际读取新旧源码、全部新增测试、原整改测试、整改报告、独立前审报告及命令/日志/XML/指纹证据。运行了仅用内存 SQLite 的独立探针，实际调用当前 Core 方法复现新问题，并检验未启动收束、事务回滚及重复收束。没有重跑会创建数据库、锁、日志、资产或缓存的 pytest；历史941不是本轮独立重跑结果。
+
+按最终交付要求，将本文件视为唯一新增文件例外。没有安装依赖、联网、调用真实模型/供应商/API、启动 Worker、执行 Git 写操作或清理目录。探针以现有 Python 的 `-B -` 从标准输入运行，数据库均为 `:memory:`，绕过会落盘的 Core/FakeProvider 构造器，仅从实际源码提取建表 DDL，业务方法使用原实现；这不能替代磁盘持久化、OS锁和进程故障验收。
+
+## P0/P1/P2 问题表
+
+以下路径均相对于本 checkout，行号为当前源码的一基行号。
+
+|级别/编号|位置|证据、影响|整改建议/裁决|
+|---|---|---|---|
+|P0|本次限定范围|未发现新 P0；不涵盖真实后端及未运行能力|不得外推生产结论|
+|P1 原01：取消后重试|`mock_core_round2/core.py:112`、`:143`；`lease_supervisor.py:75`、`:92`（前缀均 `orchestrator/services/`）|持久化取消桥接相同 RuntimeFences；重试前检查和退避取消保持；原取消反例测试有启动次数、release/force拒绝、资产断言|候选 Mock 本地关闭保持|
+|P1 原02：generation fencing|`orchestrator/services/mock_core_round2/core.py:84`、`:112`、`:157`、`:309`|完整身份比较与更新同事务；旧回调、旧发布被拒；历史46复验包含20项字段×事件反例和恢复迟到事件|候选 Mock 本地关闭保持；业务事件 page_id/input_revision 同等参数化反例仍缺|
+|P1 原03：恢复 submit 幂等|`orchestrator/services/mock_core_round2/core.py:231`、`:236`；`lease_core.py:143`|job锁、稳定key、唯一行；unknown必须原key lookup，不能盲重投；真实死亡3窗口另有新配对测试|候选 Mock 本地关闭保持；下述P2涉及共享资源重取，不是重复提交同key反例复发|
+|**P2 LEASE-IR-01（新增，阻塞本轮整体关闭）**|`orchestrator/services/mock_core_round2/lease_core.py:157`、`:160`；`orchestrator/services/mock_core_round2/core.py:243`、`:257`|前置异常置 not_submitted/resource=NULL；再次直接 Core.submit 沿用该行，进入 submitting 只改 state，没有重取 resource。提交后异常变 unknown 时仍 resource=NULL；另一job可提交同一共享 fake provider。当前方法已被内存探针复现|将 not_submitted 作为禁止原行重投的终态，或在dispatch前同一事务重验身份、原子重取共享resource并置submitting；冲突必须拒绝且provider零调用。补重取成功/被其他job占用/再次unknown/重启反例|
+|P2 原启动前永久占用|`orchestrator/services/mock_core_round2/lease_supervisor.py:80`、`:238`；`lease_core.py:69`、`:83`|新配对入口能记录可信 no_dispatch 并在cleanup后原子清resource；旧round2入口仍有原缺陷|**原反例在新配对入口局部修复获得认可**；不能据此忽略上述新的提交分支缺口|
+|P2 继承预算边界|`orchestrator/services/mock_core_v01/core.py:112`、`:235`|活动请求semantic未纳入币种/预留额/deadline；结算身份边界沿用前审所列未关闭项|另行完善请求冲突、账单/submission/attempt/币种去重，不作生产费用保证|
+|P2 未验收准入与恢复运维|`lease_core.py:133`；`lease_supervisor.py:69`；`orchestrator/tests/test_m1_vision_supervisor.py:135`、`:140`|无自动生产对账服务、Linux新启动证明、真实HTTP停止、正式Sidecar签认；媒体未全部执行|保持未验证；新P2整改后仍需单独审查联调准入|
+
+### 新 P2 的独立复现及可达边界
+
+只在RAM中建立与源码一致的表，设置RLock/固定时钟、真实Core对象和真实FakeProvider对象，不修改源码、不覆写业务方法，不调用provider网络。实际调用序列：
+
+1. 配预算，创建页03的Job A，持有其当前identity。
+2. `c.submit(identity, provider, fault=before)`：在 `intent_before_dispatch` 抛 RuntimeError；捕获后断言 state=not_submitted、resource=None、provider.calls=0。
+3. 再次 `c.submit(identity, provider, fault=after)`：在 `provider_after_submit_before_record` 抛 RuntimeError；收到 submit_unknown，断言 state=unknown、resource=None、backend_terminal_confirmed=0、provider.calls=1、unresolved(A)=True。
+4. 创建页04的Job B，调用其 `c.submit`，成功，provider.calls=2。此时A仍为unknown/NULL/未确认，B为confirmed/NULL/已确认。
+
+探针实际stdout：
+
+```text
+PROBE pre-dispatch failure: not_submitted None 0
+PROBE retry exception: submit_unknown; reconciliation required
+PROBE uncertain retry: unknown None 1 unresolved= True
+PROBE other-job submit allowed while first unknown: [('unknown', None, 0), ('confirmed', None, 1)] calls= 2
+PROBE no-dispatch release + transaction rollback + replay: PASS
+```
+
+这是已公开使用并由原46项中的并发submit测试直接调用的Core.submit接口路径。常规runner会在第一次普通异常后将Job失败，因而**本轮未证明正常runner会自动触发这次重投**。但Core没有禁止这个可重入分支，无法保证“所有unknown都保留共享租约”。FakeProvider本身即时终止，探针不声称真实服务器并发执行或真实费用损失；证明的是本地状态机丢失资源占用，且能绕过共享resource唯一约束。建议在Core边界修复，不能仅依赖调用者碰巧失败Job。
+
+## 基线、隔离和九个 checkout
+
+实际分支 `integration/m1-m2-v12-supervisor`；HEAD `0dc2844f910d0e37ae3ef0253d7838dea1f61bfb`；staged和tracked diff均为空，但初检有2634条porcelain状态，不能称clean。
+
+独立读取 `docs/m1-round2/lease-001-evidence/baseline.json`，逐个实际文件计算SHA256并逐项比对。九个checkout全部原文件匹配；候选manifest中的5个源码/测试/说明哈希也全部匹配当前文件。实际读取 preservation-final.json 作交叉核对，没有直接运行会写JSON的 verify_preservation.py。
+
+下表路径均位于 `C:/Users/16173/Documents/ChatGPT/人工智能+/`；“状态”指与整改开始时所存baseline比较。detached表示branch命令空输出。
+
+|checkout|实际分支|HEAD|baseline文件数|现有文件数（不含.git）|状态|
+|---|---|---|---:|---:|---|
+|ci-bootstrap-20261109/target-member3|detached|709155cb4eb146c298434a1c01c11de9c7e3e96d|183|183|完全一致|
+|ci-post-member3-20261110/target-dev|detached|b5136c6cfe81e9514fb4300dd90ae3794de285d0|203|203|完全一致；原20条状态保留|
+|member2-v111-integration-20261110/dev|detached|0dc2844f910d0e37ae3ef0253d7838dea1f61bfb|205|205|完全一致|
+|member2-v111-integration-r2-20261110/dev|detached|0dc2844f910d0e37ae3ef0253d7838dea1f61bfb|205|205|完全一致|
+|space|dev|f7bded63d3227adee61e8da407307dd15997136b|52|52|完全一致；原tracked diff 5174字节保留|
+|space-ci-bootstrap|ci/bootstrap-github-actions|e723d2a9901cdcc1f53173bcad86592447b7c2e2|29|29|完全一致|
+|space-m1-m2-v12-supervisor|integration/m1-m2-v12-supervisor|0dc2844f910d0e37ae3ef0253d7838dea1f61bfb|4297|6668|原字节全部一致；新增候选/证据等导致status不同；tracked/staged不变|
+|space-member2-v111-integration|integration/member2-v1.1.1|0dc2844f910d0e37ae3ef0253d7838dea1f61bfb|332|332|完全一致；原tracked diff 17645字节保留|
+|space-member3-v116-integration|integration/member3-v1.1.6|709155cb4eb146c298434a1c01c11de9c7e3e96d|183|183|完全一致|
+
+证据边界：确实取得本地历史前置指纹并逐字节对应哈希复核，支持“相对于这份baseline的既有文件未变”；baseline及日志来自同一工作区、无独立签名，不能证明其记录之前的历史，也不验证远端、未纳入baseline文件或持续运行期间的瞬时变化。M1证据目录自身被原baseline排除；其他八个checkout文件集合、状态、HEAD/branch与baseline一致。没有把未跟踪文件漏掉后声称干净。
+
+新入口仅 `lease_core.Core` + `lease_supervisor.Supervisor` + `lease_runner.run_mock`；runner精确类型检查，Core拒绝旧库无lease001表，不自动迁移。新模块继承原round2/v01，故隔离是显式入口/独立数据库与未改旧字节，不能误称完全无代码依赖。`orchestrator/main.py:18`仍选Jobs或Member3Jobs，没有接入候选；原API/公共Schema/Gate/Supervisor/tree均属于保护文件。旧round2/core.py及runner.py原字节保留，原启动前问题也保留在历史入口。Worker命令与配置factory必须继续限于受审核离线fixture，名称mock不是沙箱保证。
+
+## 完整租约路径与崩溃窗口
+
+|边界|实际实现与静态推演|裁决/限制|
+|---|---|---|
+|获取execution与lease|RuntimeFences.attempt → lease_core.register_execution:26；RLock+BEGIN IMMEDIATE，execution资源UNIQUE与owner行同事务|中途异常整体回滚；进程死于commit后/start意图前，恢复保守保留，不能仅以acquired推断未启动|
+|配置构造/准备输入/工作目录|lease_supervisor:80、:108；构造失败或dispatch_attempted=False，记录no_dispatch，随后cleanup|明确没dispatch才可安全释放；文件准备确有I/O，故本轮只静态审读对应历史测试|
+|记录启动意图|lease_supervisor:170先emit持久化worker_starting，再调用launcher|意图后、OS创建前死也会保守待对账；可能有可用性等待，不能自动超时释放|
+|创建/包含/恢复Worker|:44 suspended Popen→Assign Job→observe→resume；取得对象后emit started|创建后构造/通知异常不冒充未启动；无保留exit witness就占用。真实OS故障未在本轮启动探针|
+|本地退出|:185 drain + active0 +逐成员handle witness → reaped；lease_core:94更新退出证据|客户端退出只在local_mock_tree范围填local终止，external不填；不据客户端退出确认服务端停止|
+|cleanup/release|lease_core:83、:105，同事务写cleaned/resource=NULL与lease_released|只允许no_dispatch+cleanup或适用终止+cleanup；finally无无条件释放；RAM trigger故障证实这两表更新一起回滚|
+|外部终止|lease_core:111要求mode=mock、精确identity、terminal真；还需worker_exited及cleanup|fake协议专用；可由受信任管理接口送达，不是worker JSON或真实供应商证明|
+|提交意图|core:240先写intent+resource，再submitting事务后provider.submit|意图前可无记录；intent前置普通异常安全not_submitted；**not_submitted重入遗漏重取资源，见新P2**|
+|provider后登记前|submitting/unknown保留；lease_core:160事务提交后才抛submit_unknown|新任务原路径保留占用；未知需要lookup，未确认不得危险重投；再次unknown的空resource分支未闭合|
+|登记终止/发布|core:266回执与submission收束同事务；:309发布再次live/lease检查，DB manifest控制可见性|本地fakekey回执，不承诺真实exactly-once。私有文件与DB非一个跨系统事务，孤儿私有文件需后续运维|
+|重启|core:213提交submitting→unknown，epoch提升；lease_core:133将未释放且无no_dispatch的执行置待对账|旧身份收束只更新其原行；不自动恢复execution_unconfirmed工作。已有no_dispatch可随后可信cleanup；无可信历史见证可能长期保留，缺生产对账/运维服务|
+
+Owner保存job/page/generation/input_revision/epoch/attempt/token全部字段；lease()按attempt查且编码完整identity必须相等。release只改原attempt，不按resource名字更新一批行。已释放事件仅审计，旧generation重复收束不会触碰新租约；T09/T11/T12有相应断言。历史身份回执是受信任管理接口，不要求等于当前业务epoch，否则无法对账；业务状态更新仍要求当前identity。该设计不能直接暴露为不可信HTTP接口。
+
+## 20个新增场景逐项审查
+
+文件 `orchestrator/tests/test_m1_round2_lease001.py`。最终XML均记录通过；以下是对源码断言的独立审读，不是本轮重新执行20个磁盘/进程用例。共18个测试函数、20个参数化节点。
+
+|节点/行|操作与独立断言|覆盖边界|
+|---|---|---|
+|T01 :66|删除输入后跑配对runner；failed、lease_released、资源空、非伪造worker/backend终止、provider0；另一页实际done|覆盖原核心反例|
+|T02 :80|factory抛异常；无started、原身份释放、原因记录、provider0|factory受信任、不含自己启动后端|
+|T03 :95|真实不存在exe创建失败；failed、释放、provider0|Windows安全创建失败；不覆盖Assign/Resume失败|
+|T04 :103|intent后dispatch前异常；not_submitted、资源空、终止位0、provider0、可release|**未重投此行，遗漏新P2**|
+|T05 :114|provider登记后客户端异常；unknown资源保留、Job仍running、release拒绝、lookup恢复且calls1|从新intent出发，非not_submitted重入|
+|T06 :126|external客户端reaped+cleanup仍拒release；精确fake终止回执后释放|人工fake回执，不证明真实HTTP终止|
+|T07 :138|launcher monkeypatch不确定异常；一次launch、待对账、资源保留、provider0、release/force拒绝|没有实际逃逸进程|
+|T08 :149|重复no_dispatch/cleanup不改execution；重复预算release ledger仅1|覆盖幂等|
+|T09 :158|两个线程抢同resource仅一个成功；伪造另一job拒绝；赢家释放后另一个获得|同Core/RLock内线程，非多进程数据库竞争|
+|T10 :172|子进程worker_starting后os._exit23；重启epoch2、保留、拒no_dispatch；人工exit witness后释放|真实scheduler死亡，但没有实际创建worker，历史witness为合成管理事件|
+|T11 :197|旧释放后force新generation取得资源；重放旧释放，新行逐字段不变|覆盖旧代隔离|
+|T12 :206|七个身份字段逐一篡改均拒绝，原资源与state保留|七次子断言合计1个pytest节点|
+|persisted_no_dispatch :215|证明后close/reinit再cleanup，释放|重开连接，非os._exit故障|
+|terminal_launch_decision :222|no_dispatch后starting/started/reaped均拒，cleanup后释放|覆盖矛盾启动事件|
+|never_blindly_resubmits :232|provider后BaseException，禁lookup但仍声明幂等；停止且calls1、unresolved|fake能力边界|
+|actual_death[provider_after_submit_before_record] :243|新配对进程os._exit24；恢复done、calls0、原key、fake_tasks1、全部lease释放|实际候选子进程|
+|actual_death[files_before_db] :243|同上，文件后DB前窗口|fake发布恢复|
+|actual_death[db_after_publish] :243|同上，DB后响应前窗口|fake发布恢复|
+|rollback :275|trigger阻止release状态更新；execution资源/cleanup与lease状态均回滚|SQL语句失败，非断电/fsync或磁盘满|
+|foreign_external :285|foreign fencing token fake终止回执拒绝，原占用保留|负例在client退出前，未参数化各回执顺序|
+
+缺口：not_submitted重取资源及竞争、工作目录创建失败单独注入、Windows Job创建/Assign/Resume/started审计失败、drain或cleanup失败后恢复对账、获取/意图/OS创建/退出/cleanup各窗口真实杀进程、所有终止回执与cleanup到达顺序、生产多进程/跨主机、Linux、真实取消与费用。不把20个节点解释成20种后端能力，也不把合成reaped当真实进程证明。
+
+## 46项原整改测试身份与有效性
+
+新模块:24动态引入原测试函数，:31覆盖rig2为新Core/Supervisor；导入函数仍使用原模块globals，因此其run帮助函数仍是原round2 runner（会以新Core和新Supervisor对象执行），并非所有复验都走lease_runner类型检查。
+
+最终XML原模块46节点与新模块test_preserved_去前缀后的46节点名称**逐项完全相同**。大部分复用新rig；原actual_process_death的3项在函数及内嵌脚本中硬编码旧Core/runner/Supervisor，属于旧入口复验，不能算新候选进程死亡证据；新增actual_death三项补上新配对窗口。
+
+|原测试组|节点数|关键反例/断言|
+|---|---:|---|
+|actual_chain|1|done、资产、两execution退出cleanup、调用一次、重复运行不提交|
+|running_cancel + concurrent_cancel|3+1|OCR/VLM/backoff取消、线程重复取消、启动数、无资产、未退出前release/force拒绝|
+|external_client_exit + receipt_missing_cleanup|1+1|客户端退出不代表服务端终止；fake回执不掩盖cleanup缺失|
+|all_business_event_identities_fenced|20|failure/timeout/cancel/stage × job/generation/attempt/token/epoch；拒旧身份且目标Job完全不变|
+|recovery_late + concurrent_out_of_order|1+1|epoch提升后旧失败/超时/取消/阶段/发布拒绝；8线程仅一次合法迁移|
+|crash_windows_reuse|6|六个submit/文件/DB窗口；稳定key、submission1、fake_tasks1、实际调用不增加|
+|unknown_without_capabilities + duplicate_submit|1+1|无lookup/幂等未知仍保留；6线程同job submit只有一个fake任务|
+|original_gate_stops|4|false/missing/string safety及hash mismatch，provider0、无资产|
+|expired_control|2|超期仍接受有正确身份的取消/超时终态|
+|actual_process_death|3|旧入口真实进程退出，重启fake台账/原key复用|
+|合计|46|未发现削弱原断言；保持原三P1限定结论|
+
+完整46节点身份附于文后，可直接对应最终XML，不用汇总数替代身份。
+
+## 941/0/34 历史数字核验
+
+直接解析 `regression-final.xml`：974 testcase，(classname,name)去重仍974；940 passed、0 failure/error、34 skipped。`member3-config-only.xml`：1 testcase、1 passed；两组交集0。合计975个唯一节点，941 passed、34 skipped、0 failed/error。新增模块66=20新增+46复验，原模块46也在主回归内；它们是不同测试节点、重复验证部分相同逻辑，不能声称941种独立功能。
+
+实际历史命令（cwd为本checkout）：
+
+```powershell
+& ../member2-v111-integration-20261110/venv/Scripts/python.exe -B docs/m1-round2/lease-001-evidence/run_checks.py regression-final
+& ../member2-v111-integration-20261110/venv/Scripts/python.exe -B docs/m1-round2/lease-001-evidence/run_checks.py member3-config-only
+```
+
+已读取run_checks.py、两个*-command.json和stdout。主命令展开为 `python -B -m pytest -p no:cacheprovider -c orchestrator/tests/pytest.ini orchestrator/tests --ignore=orchestrator/tests/test_member3_integration.py tests --basetemp=<evidence>/tmp-regression-final --junitxml=<evidence>/regression-final.xml`；配置组只选 `orchestrator/tests/test_member3_integration.py::test_unknown_backend_rejected`，有独立basetemp/XML。主stdout为130.96秒，配置0.70秒。pytest.ini也禁cacheprovider；根tests/conftest.py:38自定义tmp_path会创建_test_tmp，所以不能在本轮严格只读范围重跑。
+
+命令记录环境Windows10 build19045、Python3.12.14、SQLite3.53.1、pytest9.2.0、pydantic2.14.1、fastapi0.162.0、Pillow13.0.0、httpx0.28.1、anyio4.11.0、pluggy1.7.0、jsonschema未安装。脚本清LLM_/VISION_/TTS_并禁pyc；这只是环境政策，不是网络隔离证明。历史日志没有签名绑定执行时源码；当前manifest哈希吻合只能支持文件证据一致性，不能冒充独立全量复跑或历史绝无网络调用证明。
+
+保留的首次targeted日志确为58通过/1失败，T05暴露unknown回滚；当前实现将异常移到事务外抛出，最终XML对应节点通过。targeted-final实际上是完整回归933/34，最终regression-final为940/34；这些中间轮次均未累计。主回归原874+新增66=940，再配置1=941。
+
+34项具体跳过如下。前2为协议/真实HTTP能力阻塞；后32的统一原因来自 `tests/conftest.py:29` 的ffmpeg_pair：“环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例”。未把跳过算通过。
+
+|序号|classname::name|原始跳过原因|
+|---:|---|---|
+|1|`test_m1_vision_supervisor::test_round2_formal_sidecar_protocol_acceptance`|BLOCKED: final Sidecar fields/version/path require M1/M2/M3 and owner sign-off|
+|2|`test_m1_vision_supervisor::test_round2_real_HTTP_backend_stopped`|BLOCKED: no M2 HTTP per-request cancellation adapter/proof; no real model calls authorized|
+|3|`test_pipeline::test_run_page_done`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|4|`test_pipeline::test_run_page_without_video`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|5|`test_pipeline::test_run_page_no_audio_still_renders_video`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|6|`test_pipeline::test_run_page_video_failure_degrades_not_fails`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|7|`test_pipeline::test_run_page_failed_when_no_input`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|8|`test_story::test_story_ok_path`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|9|`test_story::test_narration_never_exceeds_tts_limit`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|10|`test_story::test_ocr_failed_but_vlm_ok_degrades_to_no_ocr`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|11|`test_story::test_vlm_failed_but_ocr_ok_degrades_to_no_scene`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|12|`test_story::test_wordless_page_is_not_a_failure`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|13|`test_story::test_both_inputs_missing_raises_3001`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|14|`test_story::test_highlight_ids_only_reference_existing_objects`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|15|`test_story::test_tts_failure_falls_back_to_estimate`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|16|`test_story::test_safety_block_raises_3004`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|17|`test_story::test_invalid_age_level_returns_1002`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|18|`test_story::test_vlm_safety_false_blocks_page`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|19|`test_story::test_llm_unreachable_fails_without_writing_story`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|20|`test_story::test_llm_failure_can_fall_back_to_template`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|21|`test_tts::test_silent_engine_writes_file_and_measures`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|22|`test_tts::test_second_call_hits_content_hash_cache`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|23|`test_tts::test_different_speed_produces_different_file`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|24|`test_tts::test_engine_failure_maps_to_3008`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|25|`test_tts::test_api_success_envelope`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|26|`test_tts::test_api_missing_text_envelope`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|27|`test_tts::test_api_overlong_text_envelope`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|28|`test_tts::test_api_engine_failure_envelope`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|29|`test_tts::test_router_is_mounted_under_v1`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|30|`test_video::test_compose_video_end_to_end`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|31|`test_video::test_silent_video_when_tts_failed`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|32|`test_video::test_missing_source_image_raises`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|33|`test_video::test_retry_once_then_fail`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+|34|`test_video::test_video_json_not_written_on_failure`|环境里没有 ffmpeg/ffprobe，跳过需要真实编码的用例|
+
+`orchestrator/tests/test_member3_integration.py`共有14个测试函数，按参数化展开21节点；只执行不依赖媒体client的配置1项，另外20项在两份最终XML中均不存在，不属于34 skipped也不属于941 passed。client:20显式依赖FFMPEG_PATH/FFPROBE_PATH。其完整未执行身份如下：
+
+1. `test_full_member3_chain_and_public_files`
+2. `test_visual_boundary_stops_downstream[blocked-3004]`
+3. `test_visual_boundary_stops_downstream[bad_bbox-1002]`
+4. `test_visual_boundary_stops_downstream[cross_page-1002]`
+5. `test_visual_boundary_stops_downstream[no_content-3001]`
+6. `test_wordless_story_fallback`
+7. `test_http_tts_failure_degrades_without_invalid_audio[timeout]`
+8. `test_http_tts_failure_degrades_without_invalid_audio[html]`
+9. `test_downstream_safety_rejection_is_not_degraded[tts]`
+10. `test_downstream_safety_rejection_is_not_degraded[video]`
+11. `test_missing_or_bad_artifact_is_not_published[missing_image]`
+12. `test_missing_or_bad_artifact_is_not_published[render]`
+13. `test_missing_or_bad_artifact_is_not_published[corrupt_video]`
+14. `test_recovery_error_preserves_private_backups_and_reference`
+15. `test_force_during_thread_work_cannot_publish_stale_result`
+16. `test_batch_failure_does_not_prevent_later_page`
+17. `test_configured_content_safety_stops_tts`
+18. `test_corrupt_audio_is_never_published`
+19. `test_audio_lost_before_publication_fails_without_dangling_url`
+20. `test_final_publication_safety_error_preserves_blocked_semantics`
+
+## 剩余风险及准入结论
+
+仅能证明已审的本地候选控制逻辑、SQLite状态和确定性FakeProvider协议；本轮RAM探针不证明OS进程退出，历史Windows fixture证据也不证明真实服务器/供应商终止。不能据此宣称生产数据库、多进程并发、跨主机租约、跨平台、真实媒体或真实费用可靠。
+
+Sidecar/Capture revision、0.2-draft跨成员协议及成员签认、M1/M4接线、媒体32跳过和20未执行、生产持久化/迁移/备份/灾备/GC、真实后端task/lease/取消/账单关系、儿童数据授权与供应商政策、M5独评均继续未验证。未知启动需要可信对账才能收束；无见证时长期占用是保守隔离行为，不应加入无条件finally/定时释放来规避。
+
+|事项|最终独立裁决|
+|---|---|
+|原启动前永久占用反例|新配对候选入口局部修复成立，旧入口仍保留原缺陷|
+|LEASE-001整体候选Mock本地关闭|**否，新P2 LEASE-IR-01须整改并补反例复审**|
+|原三个P1|候选Mock本地关闭保持，未外推真实后端|
+|941/0/34|历史日志/XML计数一致；本轮未完整复跑|
+|20新增/46复验|身份与断言已核实；其中3个继承进程死亡节点仍属旧入口，新3项另补；存在上述覆盖缺口|
+|M1/M4 Mock联调|**不允许**，新P2及原准入条件未完成|
+|生产接线|**不允许**，未获任何生产验证|
+
+## 本轮保全与验证办法
+
+初检对九个checkout全部非.git文件（包含pyc等已有文件）建立内存中的逐文件SHA256集合并求树摘要，读取branch/HEAD/status及staged/unstaged二进制diff。M1排除本次唯一报告后的6668文件树摘要为 `296288683139659456579850fe8495264a94cc81f53f084f5279e9d5546ccb0b`，初检完整status SHA256为 `2db00d5c79b25e5dca8f8feec4c9e4bd1cf973cd5b15469723ab86d414ad94cc`。
+
+写完本文件后再次按相同算法核对九个树摘要及Git结果；M1 status只排除本文件的唯一新增 `?? M1_ROUND2_LEASE_001_INDEPENDENT_REVIEW.md` 行再比较，其他八个status不作排除。结果由本轮最终回复确认；报告外源码/原报告/缓存/证据/锁/资产都不得变化。新增未跟踪报告必然增加一条Git状态，不能把这个例外说成原始status逐字节完全不变。
+
+## 附录：46项原测试精确身份
+
+以下在主XML原模块各出现一次，也有新增模块的test_preserved_对应节点各一次。
+
+1. `test_actual_chain_gate_and_persistence`
+2. `test_running_cancel_forbids_retry_release_force[ocr]`
+3. `test_running_cancel_forbids_retry_release_force[vlm]`
+4. `test_running_cancel_forbids_retry_release_force[backoff]`
+5. `test_concurrent_cancel_stops_real_worker`
+6. `test_external_client_exit_never_proves_backend_terminal`
+7. `test_all_business_event_identities_fenced[failure-job_id]`
+8. `test_all_business_event_identities_fenced[failure-generation_id]`
+9. `test_all_business_event_identities_fenced[failure-attempt_id]`
+10. `test_all_business_event_identities_fenced[failure-fencing_token]`
+11. `test_all_business_event_identities_fenced[failure-epoch]`
+12. `test_all_business_event_identities_fenced[timeout-job_id]`
+13. `test_all_business_event_identities_fenced[timeout-generation_id]`
+14. `test_all_business_event_identities_fenced[timeout-attempt_id]`
+15. `test_all_business_event_identities_fenced[timeout-fencing_token]`
+16. `test_all_business_event_identities_fenced[timeout-epoch]`
+17. `test_all_business_event_identities_fenced[cancel-job_id]`
+18. `test_all_business_event_identities_fenced[cancel-generation_id]`
+19. `test_all_business_event_identities_fenced[cancel-attempt_id]`
+20. `test_all_business_event_identities_fenced[cancel-fencing_token]`
+21. `test_all_business_event_identities_fenced[cancel-epoch]`
+22. `test_all_business_event_identities_fenced[stage-job_id]`
+23. `test_all_business_event_identities_fenced[stage-generation_id]`
+24. `test_all_business_event_identities_fenced[stage-attempt_id]`
+25. `test_all_business_event_identities_fenced[stage-fencing_token]`
+26. `test_all_business_event_identities_fenced[stage-epoch]`
+27. `test_recovery_late_failure_success_and_cancel_do_not_modify_current`
+28. `test_concurrent_out_of_order_events_only_one_transition`
+29. `test_crash_windows_reuse_same_submission[submit_before_intent]`
+30. `test_crash_windows_reuse_same_submission[intent_before_dispatch]`
+31. `test_crash_windows_reuse_same_submission[provider_after_submit_before_record]`
+32. `test_crash_windows_reuse_same_submission[recorded_before_return]`
+33. `test_crash_windows_reuse_same_submission[files_before_db]`
+34. `test_crash_windows_reuse_same_submission[db_after_publish]`
+35. `test_unknown_without_idempotency_or_lookup_retains_lease`
+36. `test_duplicate_concurrent_submit_one_backend_task`
+37. `test_original_gate_stops_all_submission[false_safety]`
+38. `test_original_gate_stops_all_submission[missing_safety]`
+39. `test_original_gate_stops_all_submission[string_safety]`
+40. `test_original_gate_stops_all_submission[hash_mismatch]`
+41. `test_expired_job_still_accepts_control_terminal_event[cancel]`
+42. `test_expired_job_still_accepts_control_terminal_event[timeout]`
+43. `test_actual_process_death_recovers_persistent_backend_task[provider_after_submit_before_record]`
+44. `test_actual_process_death_recovers_persistent_backend_task[files_before_db]`
+45. `test_actual_process_death_recovers_persistent_backend_task[db_after_publish]`
+46. `test_backend_receipt_does_not_mask_missing_local_cleanup`

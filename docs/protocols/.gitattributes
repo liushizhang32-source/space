@@ -1,0 +1,2 @@
+# Preserve the authoritative frozen package's original bytes in Git blobs.
+frozen_m1_m2_v1_0/** -text

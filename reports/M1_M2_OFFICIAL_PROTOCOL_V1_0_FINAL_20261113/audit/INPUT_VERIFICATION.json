@@ -1,0 +1,26 @@
+{
+  "DECISION": {
+    "path": "C:\\Users\\16173\\Documents\\ChatGPT\\人工智能+\\reports\\M1_M2_PROTOCOL_V1_0_DECISION_PACKAGE.zip",
+    "sha256": "cb92be5dd6e1151ba5372d592ddd0f727a0ec1f14e8b062fa8a09b6666b6f61c",
+    "CRC": "PASS",
+    "manifest_entries": 90,
+    "files": 91,
+    "paths": "PASS"
+  },
+  "M1": {
+    "path": "C:\\Users\\16173\\Documents\\ChatGPT\\人工智能+\\space-m1-m2-v12-supervisor\\reports\\M1_LEASE_002_REVIEW_AND_M2_HANDOFF\\M1_LEASE_002_AND_M2_HANDOFF_EVIDENCE.zip",
+    "sha256": "8d79406711b4619e5c2dcd2e0917f6c6668e58cb5f8e08c626d9590ae5a61bcf",
+    "CRC": "PASS",
+    "manifest_entries": 90,
+    "files": 91,
+    "paths": "PASS"
+  },
+  "M2": {
+    "path": "C:\\Users\\16173\\AppData\\Local\\Temp\\codex-file-preview-vJ8c9S\\M2_V1.2.6_WORKER(1).zip",
+    "sha256": "3446b03bae8993a21e5cbff5f2ae639d8a4c43bfb08ca003f35b2957d6c1e505",
+    "CRC": "PASS",
+    "manifest_entries": 179,
+    "files": 181,
+    "paths": "PASS"
+  }
+}

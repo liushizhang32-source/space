@@ -6,12 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from agents.generation.config import Settings
-from agents.generation.errors import AppError, ErrorCode, VideoError
-from agents.generation.media import MediaStatus, probe_audio, probe_video, validate_audio, validate_video
-from agents.generation.story.builder import build_page_story
-from agents.generation.tts.client import TTSClient
-from agents.generation.video import compose_video
+from orchestrator.vendor.member3_v116.agents.generation.config import Settings
+from orchestrator.vendor.member3_v116.agents.generation.errors import AppError, ErrorCode, VideoError
+from orchestrator.vendor.member3_v116.agents.generation.media import MediaStatus, probe_audio, probe_video, validate_audio, validate_video
+from orchestrator.vendor.member3_v116.agents.generation.story.builder import build_page_story
+from orchestrator.vendor.member3_v116.agents.generation.tts.client import TTSClient
+from orchestrator.vendor.member3_v116.agents.generation.video import compose_video
 
 
 def test_probe_audio_accepts_generated_mp3(media_settings: Settings):

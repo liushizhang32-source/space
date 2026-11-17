@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "book_id": "book01",
+  "page_id": "book01_p03",
+  "page_no": 3,
+  "image_width": 96,
+  "image_height": 128,
+  "elapsed_ms": 1,
+  "status": "empty",
+  "text_blocks": [],
+  "page_confidence": 0.0
+}

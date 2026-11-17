@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "asset_id",
+    "project_id",
+    "job_id",
+    "attempt_id",
+    "sha256",
+    "relative_path",
+    "content_type"
+  ],
+  "properties": {
+    "asset_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "job_id": {
+      "type": "string"
+    },
+    "attempt_id": {
+      "type": "string"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "relative_path": {
+      "type": "string"
+    },
+    "content_type": {
+      "enum": [
+        "audio/mpeg",
+        "video/mp4",
+        "application/json"
+      ]
+    }
+  }
+}

@@ -1,0 +1,283 @@
+"""LEASE-002 offline SQLite/FakeProvider failures, ownership and real crash windows."""
+from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
+import json
+from pathlib import Path
+import sqlite3
+import subprocess
+import sys
+import threading
+
+import pytest
+from orchestrator.services.mock_core_round2.lease_core import Core
+from orchestrator.services.mock_core_round2.provider import FakeProvider
+
+
+@pytest.fixture
+def pair(tmp_path):
+    c = Core(tmp_path/'core.sqlite', clock=lambda: 1000)
+    c.configure_budget('local', 'CNY', 100)
+    p = FakeProvider(tmp_path/'fake.sqlite')
+    yield c, p
+    c.close(); p.close()
+
+
+def fault_at(window, kind=RuntimeError):
+    def fault(w):
+        if w == window:
+            raise kind(window)
+    return fault
+
+
+def prepare(c, p, page='book01_p03'):
+    j = c.create('local', page, deadline_ms=100000)
+    i = c.identity(j['job_id']); calls = p.calls
+    with pytest.raises(RuntimeError, match='intent_before_dispatch'):
+        c.submit(i, p, fault=fault_at('intent_before_dispatch'))
+    r = submission(c, i)
+    old = c.db.execute('SELECT * FROM lease002_submissions WHERE job=?', (i['job_id'],)).fetchone()
+    assert r['state'] == 'not_submitted' and r['resource'] is None
+    assert old['state'] == 'not_submitted' and old['resource'] is None and p.calls == calls
+    return i, dict(old)
+
+
+def submission(c, i):
+    return dict(c.db.execute('SELECT * FROM submissions WHERE job=?', (i['job_id'],)).fetchone())
+
+
+def active(c, i, state):
+    r = submission(c, i)
+    l = c.db.execute('SELECT * FROM lease002_submissions WHERE job=? AND resource IS NOT NULL', (i['job_id'],)).fetchone()
+    assert r['state'] == state and l['state'] == state
+    assert r['resource'] == l['resource'] == c.SUBMISSION_RESOURCE
+    assert r['identity'] == l['owner'] and r['idem'] == l['idem']
+    assert json.loads(l['owner'])['job_id'] == i['job_id']
+    return dict(l)
+
+
+def make_unknown(c, p, i):
+    calls = p.calls
+    with pytest.raises(ValueError, match='submit_unknown'):
+        c.submit(i, p, fault=fault_at('provider_after_submit_before_record'))
+    assert p.calls == calls + 1
+    return active(c, i, 'unknown')
+
+
+def assert_blocked(c, p, i):
+    calls = p.calls
+    with pytest.raises(ValueError, match='submission_resource_busy'):
+        c.submit(i, p)
+    assert p.calls == calls
+    assert submission(c, i)['state'] == 'not_submitted' and submission(c, i)['resource'] is None
+    assert c.db.execute('SELECT count(*) FROM lease002_submissions WHERE job=? AND resource IS NOT NULL', (i['job_id'],)).fetchone()[0] == 0
+    assert c.db.execute("SELECT 1 FROM events WHERE job=? AND kind='lease002_acquire_blocked_resource_busy'", (i['job_id'],)).fetchone()
+
+
+def test_T01_retry_reacquires_before_dispatch(pair, monkeypatch):
+    c, p = pair; i, old = prepare(c, p)
+    submit = p.submit; observed = []
+    def checked(key):
+        lease = active(c, i, 'submitting')
+        assert lease['lease_id'] != old['lease_id'] and json.loads(lease['owner']) == i
+        observed.append(lease['lease_id'])
+        return submit(key)
+    monkeypatch.setattr(p, 'submit', checked)
+    c.submit(i, p)
+    assert len(observed) == 1 and p.calls == 1
+    assert submission(c, i)['state'] == 'confirmed' and submission(c, i)['resource'] is None
+    assert c.submission_lease(i, observed[0])['state'] == 'confirmed'
+
+
+def test_T02_occupied_resource_refuses_retry(pair):
+    c, p = pair; i, _ = prepare(c, p); other, _ = prepare(c, p, 'book01_p04')
+    winner = make_unknown(c, p, other); assert_blocked(c, p, i)
+    assert active(c, other, 'unknown') == winner and p.calls == 1
+
+
+def test_T03_failed_acquisition_never_calls_provider(pair, monkeypatch):
+    c, p = pair; i, _ = prepare(c, p); other, _ = prepare(c, p, 'book01_p04')
+    class Stop(BaseException): pass
+    with pytest.raises(Stop): c.submit(other, p, fault=fault_at('lease002_after_acquire', Stop))
+    active(c, other, 'intent')
+    monkeypatch.setattr(p, 'submit', lambda _: pytest.fail('provider must not be called'))
+    assert_blocked(c, p, i); assert p.calls == 0
+
+
+def test_T04_retry_unknown_preserves_new_owner(pair):
+    c, p = pair; i, old = prepare(c, p); lease = make_unknown(c, p, i)
+    assert lease['lease_id'] != old['lease_id'] and json.loads(lease['owner']) == i and p.calls == 1
+    assert not submission(c, i)['backend_terminal_confirmed']
+
+
+def test_T05_unknown_lease_blocks_release_force_and_resubmit(pair):
+    c, p = pair; i, _ = prepare(c, p); lease = make_unknown(c, p, i)
+    p.supports_lookup = False
+    for _ in range(2):
+        with pytest.raises(ValueError, match='submit_unknown'): c.submit(i, p)
+        with pytest.raises(ValueError): c.release(i['job_id'])
+        with pytest.raises(ValueError): c.create('local', 'book01_p03', deadline_ms=100000, force=True)
+        assert active(c, i, 'unknown') == lease and p.calls == 1
+
+
+@pytest.mark.parametrize('window', ['lease002_after_acquire', 'lease002_before_request', 'provider_after_submit_before_record', 'recorded_before_return'])
+def test_T06_process_crash_across_retry_boundaries(tmp_path, window):
+    code = """import os,sys
+from pathlib import Path
+from orchestrator.services.mock_core_round2.lease_core import Core
+from orchestrator.services.mock_core_round2.provider import FakeProvider
+r=Path(sys.argv[1]);c=Core(r/'core.sqlite',clock=lambda:1000);c.configure_budget('local','CNY',100);p=FakeProvider(r/'fake.sqlite')
+j=c.create('local','book01_p03',deadline_ms=100000);i=c.identity(j['job_id'])
+def before(w):
+ if w=='intent_before_dispatch':raise RuntimeError('before')
+try:c.submit(i,p,fault=before)
+except RuntimeError:pass
+def die(w):
+ if w==sys.argv[2]:os._exit(29)
+c.submit(i,p,fault=die)
+"""
+    result = subprocess.run([sys.executable, '-B', '-c', code, str(tmp_path), window], capture_output=True)
+    assert result.returncode == 29, result.stderr
+    c = Core(tmp_path/'core.sqlite', clock=lambda: 1000); p = FakeProvider(tmp_path/'fake.sqlite')
+    try:
+        jid = c.db.execute('SELECT id FROM jobs').fetchone()[0]; i = c.identity(jid)
+        count = p.db.execute('SELECT count(*) FROM fake_tasks').fetchone()[0]
+        if window == 'recorded_before_return':
+            assert submission(c, i)['state'] == 'confirmed' and submission(c, i)['resource'] is None and count == 1
+            assert c.db.execute("SELECT count(*) FROM lease002_submissions WHERE state='confirmed' AND resource IS NULL").fetchone()[0] == 1
+            c.submit(i, p); assert p.calls == 0
+        else:
+            state = 'intent' if window == 'lease002_after_acquire' else 'unknown'
+            lease = active(c, i, state)
+            assert json.loads(lease['owner'])['epoch'] == 1 and i['epoch'] == 2
+            assert count == (1 if window == 'provider_after_submit_before_record' else 0) and p.calls == 0
+            if window == 'lease002_before_request':
+                with pytest.raises(ValueError, match='submit_unknown'): c.submit(i, p)
+                assert active(c, i, 'unknown') == lease and p.calls == 0
+            else:
+                c.submit(i, p)
+                assert submission(c, i)['state'] == 'confirmed' and submission(c, i)['resource'] is None
+                assert p.calls == (1 if state == 'intent' else 0)
+    finally: c.close(); p.close()
+
+
+def test_T07_reopen_rechecks_original_durable_owner(pair):
+    c, p = pair; i, _ = prepare(c, p); lease = make_unknown(c, p, i)
+    c.close(); c.__init__(c.path, clock=lambda: 1000)
+    current = c.identity(i['job_id']); assert current['epoch'] == 2
+    assert active(c, current, 'unknown')['owner'] == json.dumps(i, sort_keys=True, separators=(',', ':'))
+    p.supports_lookup = False
+    with pytest.raises(ValueError, match='submit_unknown'): c.submit(current, p)
+    assert c.submission_lease(i, lease['lease_id'])['resource'] == c.SUBMISSION_RESOURCE and p.calls == 1
+
+
+def test_T08_concurrent_retries_one_shared_resource(pair):
+    c, p = pair; ids = [prepare(c, p, page)[0] for page in ['book01_p03', 'book01_p04']]
+    barrier = threading.Barrier(2)
+    def run(i):
+        barrier.wait()
+        try: c.submit(i, p, fault=fault_at('provider_after_submit_before_record'))
+        except ValueError as exc: return str(exc)
+    with ThreadPoolExecutor(2) as pool: results = list(pool.map(run, ids))
+    assert sum('submit_unknown' in s for s in results) == 1 and sum('submission_resource_busy' in s for s in results) == 1
+    assert p.calls == 1
+    winner = next(i for i in ids if submission(c, i)['state'] == 'unknown')
+    active(c, winner, 'unknown')
+    loser = next(i for i in ids if i != winner)
+    assert submission(c, loser)['state'] == 'not_submitted' and submission(c, loser)['resource'] is None
+
+
+def test_T09_old_generation_cannot_release_new_lease(pair):
+    c, p = pair; old_i, old = prepare(c, p)
+    c.cancel(old_i['job_id']); c.release(old_i['job_id'])
+    j = c.create('local', 'book01_p03', deadline_ms=100000, force=True); i = c.identity(j['job_id'])
+    lease = make_unknown(c, p, i)
+    assert old_i['generation_id'] != i['generation_id']
+    assert c.reconcile_submission(old_i, p, lease_id=old['lease_id']) is None
+    with pytest.raises(ValueError, match='owner mismatch'): c.reconcile_submission(old_i, p, lease_id=lease['lease_id'])
+    assert active(c, i, 'unknown') == lease and p.calls == 1
+
+
+def test_T10_old_attempt_and_token_cannot_release_new_lease(pair):
+    c, p = pair; old_i, old = prepare(c, p)
+    j = c.get(old_i['job_id']); i = c.control(j)
+    c.register_execution(i, 'ocr')
+    c.observe_execution(i, dict(event='launch_not_dispatched', proof='local-launcher/no-process-created', reason='new-control-fixture'))
+    c.observe_execution(i, dict(event='cleaned'))
+    lease = make_unknown(c, p, i)
+    assert i['attempt_id'] != old_i['attempt_id'] and i['fencing_token'] != old_i['fencing_token']
+    c.reconcile_submission(old_i, p, lease_id=old['lease_id'])
+    for field in ['attempt_id', 'fencing_token', 'job_id', 'generation_id', 'epoch', 'page_id', 'input_revision']:
+        wrong = deepcopy(i); wrong[field] = old_i[field] if field in {'attempt_id', 'fencing_token'} else ('foreign' if type(i[field]) is str else 999)
+        with pytest.raises(ValueError, match='owner mismatch'): c.reconcile_submission(wrong, p, lease_id=lease['lease_id'])
+    assert active(c, i, 'unknown') == lease and p.calls == 1
+
+
+def test_T11_duplicate_retries_never_duplicate_backend_submission(pair):
+    c, p = pair; i, _ = prepare(c, p)
+    with ThreadPoolExecutor(6) as pool: refs = list(pool.map(lambda _: c.submit(i, p), range(6)))
+    assert len(set(refs)) == 1 and p.calls == 1
+    assert submission(c, i)['state'] == 'confirmed' and submission(c, i)['resource'] is None
+    assert c.db.execute("SELECT count(*) FROM lease002_submissions WHERE state='confirmed' AND resource IS NULL").fetchone()[0] == 1
+
+
+def test_T12_terminal_confirmation_releases_exact_lease(pair):
+    c, p = pair; i, _ = prepare(c, p); lease = make_unknown(c, p, i)
+    c.cancel(i['job_id'])
+    with pytest.raises(ValueError): c.release(i['job_id'])
+    c.reconcile_submission(i, p, lease_id=lease['lease_id'])
+    c.release(i['job_id'])
+    assert submission(c, i)['state'] == 'confirmed' and submission(c, i)['resource'] is None
+    assert c.submission_lease(i, lease['lease_id'])['resource'] is None and p.calls == 1
+    other, _ = prepare(c, p, 'book01_p04'); next_lease = make_unknown(c, p, other)
+    c.reconcile_submission(i, p, lease_id=lease['lease_id'])
+    assert active(c, other, 'unknown') == next_lease and p.calls == 2
+
+
+def test_acquisition_owner_and_intent_rollback_together(pair):
+    c, p = pair; i, old = prepare(c, p)
+    c.db.execute("CREATE TRIGGER deny_rearm BEFORE UPDATE OF state ON submissions WHEN NEW.state='intent' BEGIN SELECT RAISE(ABORT,'injected'); END")
+    with pytest.raises(ValueError, match='submission_lease_acquisition_failed'): c.submit(i, p)
+    assert submission(c, i)['state'] == 'not_submitted' and submission(c, i)['resource'] is None and p.calls == 0
+    assert c.db.execute('SELECT count(*) FROM lease002_submissions').fetchone()[0] == 1
+    assert c.submission_lease(i, old['lease_id'])['resource'] is None
+
+
+def test_terminal_release_rollback_retains_resource(pair):
+    c, p = pair; i, _ = prepare(c, p)
+    c.db.execute("CREATE TRIGGER deny_terminal BEFORE UPDATE OF state ON lease002_submissions WHEN NEW.state='confirmed' BEGIN SELECT RAISE(ABORT,'injected'); END")
+    lease = make_unknown(c, p, i)
+    assert not submission(c, i)['backend_terminal_confirmed'] and p.calls == 1
+    c.db.execute('DROP TRIGGER deny_terminal')
+    c.reconcile_submission(i, p, lease_id=lease['lease_id'])
+    assert submission(c, i)['state'] == 'confirmed' and submission(c, i)['resource'] is None and p.calls == 1
+
+
+def test_dispatch_barrier_rollback_proves_no_request(pair):
+    c, p = pair; i, _ = prepare(c, p)
+    c.db.execute("CREATE TRIGGER deny_barrier BEFORE UPDATE OF state ON lease002_submissions WHEN NEW.state='submitting' BEGIN SELECT RAISE(ABORT,'injected'); END")
+    with pytest.raises(sqlite3.IntegrityError): c.submit(i, p)
+    assert submission(c, i)['state'] == 'not_submitted' and submission(c, i)['resource'] is None and p.calls == 0
+    rows = c.db.execute('SELECT * FROM lease002_submissions WHERE job=?', (i['job_id'],)).fetchall()
+    assert len(rows) == 2 and all(r['state'] == 'not_submitted' and r['resource'] is None for r in rows)
+
+
+def test_invalid_terminal_lookup_cannot_release(pair, monkeypatch):
+    c, p = pair; i, _ = prepare(c, p); lease = make_unknown(c, p, i)
+    monkeypatch.setattr(p, 'lookup', lambda _: dict(mode='mock', key=lease['idem'], terminal=False, task_ref='FAKE_bad'))
+    with pytest.raises(ValueError, match='submit_unknown'): c.reconcile_submission(i, p, lease_id=lease['lease_id'])
+    assert active(c, i, 'unknown') == lease and not submission(c, i)['backend_terminal_confirmed'] and p.calls == 1
+
+
+def test_restart_refuses_missing_durable_unknown_lease(tmp_path):
+    c = Core(tmp_path/'core.sqlite', clock=lambda: 1000); c.configure_budget('local', 'CNY', 100)
+    p = FakeProvider(tmp_path/'fake.sqlite')
+    try:
+        i, _ = prepare(c, p); lease = make_unknown(c, p, i)
+        c.db.execute('UPDATE lease002_submissions SET resource=NULL WHERE lease_id=?', (lease['lease_id'],))
+        assert submission(c, i)['state'] == 'unknown' and submission(c, i)['resource'] == c.SUBMISSION_RESOURCE
+        c.close()
+        with pytest.raises(ValueError, match='inconsistent durable submission lease'): c.__init__(c.path, clock=lambda: 1000)
+        assert p.calls == 1 and p.db.execute('SELECT count(*) FROM fake_tasks').fetchone()[0] == 1
+        with sqlite3.connect(tmp_path/'core.sqlite') as db:
+            assert db.execute('SELECT state,resource FROM submissions').fetchone() == ('unknown', Core.SUBMISSION_RESOURCE)
+    finally: c.close(); p.close()

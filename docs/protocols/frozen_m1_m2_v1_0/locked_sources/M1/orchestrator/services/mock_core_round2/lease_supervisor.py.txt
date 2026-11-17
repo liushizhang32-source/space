@@ -1,0 +1,266 @@
+"""LEASE-001 local fixture supervisor. Explicit opt-in; no HTTP backend support.
+
+_once preserves the reviewed Supervisor envelope/Gate/tree-drain algorithm.
+Only launch lifecycle notifications and a local no-process-created witness differ.
+The original Supervisor and tree modules remain unchanged.
+"""
+from dataclasses import asdict
+import ctypes
+import hashlib
+import json
+import logging
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+import time
+
+from ..vision_supervisor.supervisor import (Supervisor as BaseSupervisor, VisionError,
+    Cancelled, Snapshot, retryable, confined_file, unique_json)
+from ..vision_supervisor.tree import ContainmentError, drain, start_tree
+
+logger = logging.getLogger(__name__)
+
+
+class NoProcessCreated(RuntimeError):
+    """Trusted local launcher did not obtain any process from OS creation."""
+
+
+if os.name == 'nt':
+    from ..vision_supervisor.tree import WindowsTree, kernel, Extended, checked
+
+    class WitnessedWindowsTree(WindowsTree):
+        def __init__(self, argv, cwd, env, log):
+            self.job = None
+            self.process = None
+            self.members = {}
+            try:
+                self.job = kernel.CreateJobObjectW(None, None)
+                checked(self.job)
+                info = Extended()
+                info.basic.flags = 0x2000
+                checked(kernel.SetInformationJobObject(self.job, 9, ctypes.byref(info), ctypes.sizeof(info)))
+                self.process = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
+                    stdout=log, stderr=subprocess.STDOUT, close_fds=True,
+                    creationflags=subprocess.CREATE_NO_WINDOW | 0x4)
+                checked(kernel.AssignProcessToJobObject(self.job, int(self.process._handle)))
+                self.observe()
+                self._resume()
+            except BaseException as exc:
+                no_process = self.process is None
+                if self.process is not None:
+                    kernel.TerminateJobObject(self.job, 1)
+                    self.process.kill()
+                    self.process.wait()
+                if self.job:
+                    kernel.CloseHandle(self.job)
+                    self.job = None
+                for handle in self.members.values():
+                    kernel.CloseHandle(handle)
+                if no_process and isinstance(exc, Exception):
+                    raise NoProcessCreated(type(exc).__name__) from exc
+                # Even if constructor cleanup ran, without a retained witness
+                # this candidate conservatively retains the lease.
+                raise
+
+
+class Supervisor(BaseSupervisor):
+    def start_local_tree(self, argv, cwd, env, log, *, cgroup_root=None):
+        if os.name == 'nt':
+            return WitnessedWindowsTree(argv, cwd, env, log)
+        # No new Linux proof capability is claimed; failure here stays uncertain.
+        return start_tree(argv, cwd, env, log, cgroup_root=cgroup_root)
+
+    def _run(self, record, fences, stage, spec_for_attempt, image_path, *, c1=None):
+        if stage not in {'ocr', 'vlm'}:
+            raise ValueError('OCR/VLM only')
+        with fences.serial[record.page_id]:
+            for number in (1, 2):
+                identity = fences.attempt(record)
+                try:
+                    spec = spec_for_attempt(number)
+                    if spec.execution_scope != 'process_tree' or spec.backend is not None or spec.environment:
+                        raise ValueError('LEASE-001 accepts credential-free local fixtures only')
+                except Exception as exc:
+                    self.emit('launch_not_dispatched', identity,
+                              proof='local-launcher/no-process-created', reason=type(exc).__name__)
+                    self.emit('cleaned', identity, workdir=None)
+                    raise
+                try:
+                    return self._once(record, fences, identity, stage, spec, image_path, c1=c1)
+                except VisionError as exc:
+                    fences.check(record)
+                    if number == 2 or not retryable(exc, stage):
+                        raise
+                    self.emit('backoff', identity, seconds=1, code=exc.code)
+                    if record.cancel.wait(self.backoff):
+                        raise Cancelled() from exc
+            raise AssertionError('Unreachable')
+
+    def _once(self, record, fences, identity, stage, spec, image_path, *, c1=None):
+        work = None
+        tree, reaped = None, False
+        record.worker_state = 'starting'
+        task_ref = None
+        dispatch_attempted = False
+        try:
+            work = Path(tempfile.mkdtemp(prefix='attempt-', dir=self.root))
+            image_raw = Path(image_path).read_bytes()
+            image_hash = hashlib.sha256(image_raw).hexdigest()
+            image_copy = work/('input'+Path(image_path).suffix)
+            image_copy.write_bytes(image_raw)
+            request = dict(protocol='m1-vision-worker/0.1', **asdict(identity), stage=stage,
+                image_path=str(image_copy), image_sha256=image_hash, result_path='result.json',
+                outputs={'c1':f'json/{identity.page_id}_ocr.json',
+                         'c2':f'json/{identity.page_id}_vlm.json',
+                         'sidecar':f'json/{identity.page_id}_refs.json'})
+            if stage == 'vlm':
+                from ..vision_supervisor.gate import Gate
+                Gate.bound_c1(c1, identity, image_hash)
+                (work/'c1.json').write_bytes(c1.documents['c1'])
+                request['inputs'] = {'c1': str(work/'c1.json')}
+                request['c1_binding'] = dict(identity=asdict(c1.identity),
+                    sha256=hashlib.sha256(c1.documents['c1']).hexdigest(), image_sha256=image_hash)
+            (work/'request.json').write_text(json.dumps(request), encoding='utf-8')
+            env = {k: os.environ[k] for k in ('SystemRoot', 'WINDIR', 'COMSPEC', 'SYSTEMDRIVE') if k in os.environ}
+            env.update(PATH=os.pathsep.join([str(Path(spec.argv[0]).parent), os.defpath]),
+                PYTHONDONTWRITEBYTECODE='1', PYTHONIOENCODING='utf-8',
+                TEMP=str(work), TMP=str(work), TMPDIR=str(work))
+            allowed = {'VISION_BACKEND', 'VISION_MODEL', 'VISION_BASE_URL', 'VISION_API_KEY'}
+            supplied = dict(spec.environment)
+            if len(supplied) != len(spec.environment) or set(supplied)-allowed:
+                raise VisionError(1002, 'Worker environment key not allowed')
+            env.update(supplied)
+            for key in ('HOME', 'USERPROFILE', 'XDG_CACHE_HOME', 'HF_HOME', 'PADDLE_HOME'):
+                env[key] = str(work/'cache')
+            if spec.execution_scope not in {'process_tree', 'http_service'}:
+                raise VisionError(1002, 'Unknown backend execution scope')
+            if spec.execution_scope == 'http_service':
+                if spec.backend is None:
+                    raise VisionError(9001, 'backend_execution_unconfirmed')
+                with fences.lock:
+                    fences.check(record, identity)
+                    resource = spec.backend_resource_id
+                    if type(resource) is not str or not resource.strip():
+                        raise VisionError(1002, 'Invalid backend resource registration')
+                    if resource in fences.backend_resources:
+                        raise VisionError(9001, 'backend_execution_unconfirmed: resource leased')
+                    if any(p.backend_execution and p.backend_execution['status'] != 'confirmed'
+                           and not any(lease[0] is p for lease in fences.backend_resources.values())
+                           for p in fences.pages.values()):
+                        raise VisionError(9001, 'backend_execution_unconfirmed: unknown resource')
+                    # Reserve BEFORE task registration/launch: force cannot lose
+                    # the old generation during either operation.
+                    fences.backend_resources[resource] = (record, identity)
+                    record.backend_execution = dict(status='backend_execution_unconfirmed',
+                        identity=asdict(identity), task_ref=None, termination_confirmed=False)
+                reference = spec.backend.task_reference(identity)
+                if type(reference) is not str or not reference.strip():
+                    raise VisionError(9001, 'backend_execution_unconfirmed')
+                task_ref = reference
+                with fences.lock:
+                    record.backend_execution['task_ref'] = task_ref
+            fences.check(record, identity)
+            # Includes process creation, interpreter/model import and result writing.
+            started = time.monotonic()
+            # Arbitrary SDK stdout/stderr can contain injected credentials.
+            # Diagnostics must arrive through the reviewed structured envelope.
+            with open(os.devnull, 'wb') as log:
+                self.emit('worker_starting', identity)
+                dispatch_attempted = True
+                tree = self.start_local_tree([*spec.argv, str(work/'request.json')], work, env, log,
+                                  cgroup_root=self.cgroup_root)
+                self.emit('started', identity, pid=tree.process.pid, workdir=str(work))
+                record.worker_state = 'running'
+                try:
+                    while True:
+                        fences.check(record, identity)
+                        tree.observe()
+                        if time.monotonic()-started >= self.deadline:
+                            raise VisionError(2002, 'OCR/VLM attempt wall-clock deadline exceeded', transient=True)
+                        if tree.process.poll() is not None:
+                            break
+                        record.cancel.wait(min(.01, max(0, self.deadline-(time.monotonic()-started))))
+                finally:
+                    record.worker_state = 'draining'
+                    # Also terminate orphan descendants after a normal root exit.
+                    drain(tree, kill=tree.process.poll() is None)
+                    reaped = True
+                    record.worker_state = 'reaped'
+                    self.emit('reaped', identity, pid=tree.process.pid, returncode=tree.process.returncode,
+                              elapsed=time.monotonic()-started, active=0,
+                              member_exit_witness=tree.exit_witness)
+                    if task_ref is not None:
+                        # Trusted M1 adapter, never a Worker self-attestation.
+                        self.settle_backend(record, identity, spec.backend, task_ref,
+                            cancel=record.cancel.is_set() or tree.process.returncode != 0
+                                   or time.monotonic()-started >= self.deadline,
+                            fences=fences, resource_id=spec.backend_resource_id)
+            fences.check(record, identity)
+            raw = confined_file(work, 'result.json').read_bytes()
+            try:
+                doc = unique_json(raw)
+                if not isinstance(doc, dict) or doc.get('protocol') != 'm1-vision-worker/0.1':
+                    raise ValueError('Protocol mismatch')
+                expected = asdict(identity)
+                received = doc.get('identity')
+                if (type(received) is not dict or set(received) != set(expected)
+                        or any(type(received[k]) is not type(v) or received[k] != v
+                               for k, v in expected.items())):
+                    raise VisionError(1002, 'Worker identity/generation/fencing mismatch')
+                if type(doc.get('code')) is not int or type(doc.get('msg')) is not str:
+                    raise ValueError('Invalid error envelope')
+                empty_ocr = doc['code'] == 3001 and stage == 'ocr'
+                if doc['code'] and not empty_ocr:
+                    # A validated failure is allowed with a nonzero exit, never a success.
+                    raise VisionError(doc['code'], doc['msg'], transient=doc.get('transient') is True)
+                if tree.process.returncode != 0 and not empty_ocr:
+                    raise VisionError(2001, 'Worker exited unsuccessfully')
+                refs = doc['artifacts']
+                if not isinstance(refs, dict) or set(refs) != ({'c1'} if stage == 'ocr' else {'c2', 'sidecar'}):
+                    raise ValueError('Unexpected/missing artifacts')
+                if any(refs[k] != request['outputs'][k] for k in refs):
+                    raise ValueError('Artifact path differs from M1 allocation')
+                documents = {key: confined_file(work, value).read_bytes() for key, value in refs.items()}
+                if empty_ocr:
+                    # Preserve 3001 as a non-retried empty observation, only when
+                    # the worker supplied a real, valid frozen C1(empty).
+                    from orchestrator.schemas.ocr import OCRData
+                    empty = OCRData.model_validate(unique_json(documents['c1']))
+                    if empty.status != 'empty' or empty.page_id != identity.page_id:
+                        raise ValueError('3001 must carry C1(empty) for this page')
+                    self.emit('ocr_empty', identity, code=3001)
+                return Snapshot(identity, spec.source_id, documents, doc['code'], image_hash,
+                    hashlib.sha256(documents['c1']).hexdigest() if stage == 'ocr' else None)
+            except (ValueError, KeyError, TypeError) as exc:
+                raise VisionError(1002, 'Malformed worker envelope/artifact') from exc
+        except BaseException as exc:
+            if tree is None:
+                if not dispatch_attempted or isinstance(exc, NoProcessCreated):
+                    self.emit('launch_not_dispatched', identity, proof='local-launcher/no-process-created', reason=type(exc).__name__)
+                else:
+                    self.emit('launch_uncertain', identity, reason=type(exc).__name__)
+            raise
+        finally:
+            try:
+                if task_ref is not None and tree is None:
+                    self.settle_backend(record, identity, spec.backend, task_ref, cancel=True,
+                        fences=fences, resource_id=spec.backend_resource_id)
+            finally:
+                # A start failure is safe only if no running tree escaped containment.
+                # drain errors preserve/quarantine files and prohibit automatic retry.
+                if tree is None or reaped:
+                    try:
+                        if work is not None:
+                            shutil.rmtree(work)
+                        self.emit('cleaned', identity, workdir=str(work))
+                    except OSError:
+                        logger.exception('M1 private attempt cleanup failed: %s', work)
+                        # Even cleanup failure must not start another attempt.
+                        raise ContainmentError('Attempt cleanup failed; no retry')
+                else:
+                    record.worker_state = 'quarantined'
+                    self.quarantined.append((identity, tree, work))
+                    logger.error('M1 workspace quarantined, process drain not proven: %s', work)
+

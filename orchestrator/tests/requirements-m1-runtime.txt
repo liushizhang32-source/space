@@ -1,0 +1,3 @@
+# M1-owned V0.8.1 OFFLINE_REFERENCE dependencies; no production adapters.
+cryptography==50.0.2
+rfc8785==0.1.4

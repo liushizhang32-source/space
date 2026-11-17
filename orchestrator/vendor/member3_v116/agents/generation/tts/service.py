@@ -11,7 +11,10 @@ from __future__ import annotations
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
+from orchestrator.core.config import Settings as M1Settings
+from orchestrator.services.vision_supervisor.authorization.asset_policy import (
+    AssetFiles, offline_mock_enabled,
+)
 
 from ..config import Settings
 from ..envelope import fail
@@ -37,19 +40,38 @@ async def handle_unexpected(_request: Request, exc: Exception) -> JSONResponse:
     )
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, *, m1_assets=None) -> FastAPI:
     settings = settings or Settings.from_env()
+    # M1 owns configuration validation and release policy, including direct
+    # factory calls. Never infer authorization from Member3 settings or headers.
+    asset_settings = M1Settings(data_dir=settings.data_dir)
     settings.ensure_dirs()
 
     app = FastAPI(title="纸书智伴 · TTS（成员 3）", version="1.0")
     app.state.settings = settings
     app.state.tts_client = TTSClient(settings)
     app.include_router(router)
+    if m1_assets is not None:
+        from orchestrator.services.offline_protocols.assets import PrivateAssets
+        if type(m1_assets) is not PrivateAssets or asset_settings.deployment_env != 'local' or asset_settings.asset_mode != 'blocked':
+            raise ValueError('Private offline assets require local M1 authority')
+        app.mount('/_m1/assets', m1_assets.http_app(), name='m1-private-assets')
     app.add_exception_handler(RequestValidationError, handle_validation_error)
     app.add_exception_handler(Exception, handle_unexpected)
 
+    @app.middleware("http")
+    async def protect_cached_tts_reads(request: Request, call_next):
+        # Synthesis may read an existing private cache (ffprobe/ffmpeg) before
+        # returning its URL. Deny before entering that path outside Mock demos.
+        if request.method == "POST" and request.url.path == "/api/v1/tts":
+            if asset_settings.asset_mode != "offline_mock" or not offline_mock_enabled():
+                return JSONResponse(status_code=200, content=fail(
+                    ErrorCode.UNAVAILABLE, "资产授权不可用", new_trace_id()))
+        return await call_next(request)
+
     # 让 A6 返回的 audio_url 在本服务下真的可访问（默认 8001 而非 8000）
-    app.mount("/audios", StaticFiles(directory=str(settings.audios_dir)), name="audios")
+    app.mount("/audios", AssetFiles(directory=settings.audios_dir,
+                                    mode=asset_settings.asset_mode), name="audios")
 
     @app.get("/healthz", tags=["health"])
     async def healthz() -> dict:

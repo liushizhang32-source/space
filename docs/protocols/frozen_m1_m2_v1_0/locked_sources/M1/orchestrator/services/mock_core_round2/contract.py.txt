@@ -1,0 +1,178 @@
+"""unified_interaction/0.2-draft: synthetic offline graph validation only."""
+from datetime import datetime
+import math
+from pathlib import PurePosixPath
+import re
+
+VERSION='unified_interaction/0.2-draft'
+COLLECTIONS={'books':'book_id','pages':'page_id','stories':'story_id','segments':'segment_id',
+             'assets':'asset_id','videos':'video_id','audios':'audio_asset_id',
+             'interactions':'interaction_id','objects':'object_id','conversations':'conversation_id','turns':'turn_id'}
+LINEAGE=('book_id','book_revision','page_id','page_revision','story_id','story_revision','segment_id','segment_revision')
+CONTEXT=LINEAGE+('generation_id','video_id','video_revision','frame_timestamp')
+
+
+def need(value,msg):
+    if not value: raise ValueError(msg)
+
+def fields(row,names):
+    need(type(row) is dict,'object required')
+    for n in names: need(n in row,'required '+n)
+
+def integer(v,zero=False): return type(v) is int and v>=(0 if zero else 1)
+def text(v): return type(v) is str and bool(v.strip())
+def numeric(v): return type(v) in (float,int) and math.isfinite(v)
+def sha(v): return type(v) is str and re.fullmatch('[0-9a-f]{64}',v) and v!='0'*64
+
+
+def validate(doc):
+    fields(doc,('schema_version','scope_id','privacy',*COLLECTIONS))
+    need(doc['schema_version']==VERSION and text(doc['scope_id']),'version/scope')
+    privacy=doc['privacy']
+    need(type(privacy) is dict and privacy==dict(synthetic_only=True,child_identifiers=False,training_allowed=False,retention_policy='review_required')
+         and all(type(privacy[k]) is bool for k in ('synthetic_only','child_identifiers','training_allowed')),'synthetic privacy profile')
+    maps={}
+    for group,key in COLLECTIONS.items():
+        need(type(doc[group]) is list,'collection list'); maps[group]={}
+        for row in doc[group]:
+            fields(row,(key,'revision','status','error','created_at','provenance'))
+            need(text(row[key]) and integer(row['revision']),'entity ID/revision')
+            for name,value in row.items():
+                if name.endswith('_revision') and value is not None:
+                    need(integer(value),'raw revision integer required')
+            need(type(row['status']) is str and row['status'] in {'draft','ready','blocked','failed'},'status')
+            if row['status'] in {'blocked','failed'}:
+                fields(row['error'],('code','message')); need(text(row['error']['code']) and text(row['error']['message']),'error')
+            else: need(row['error'] is None,'unexpected error')
+            stamp=row['created_at']
+            need(type(stamp) is str and re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z',stamp),'UTC date-time')
+            datetime.fromisoformat(stamp.replace('Z','+00:00'))
+            fields(row['provenance'],('source','source_ref'))
+            need(row['provenance']['source']=='mock' and text(row['provenance']['source_ref'])
+                 and row['provenance']['source_ref'].startswith('private/'),'mock provenance')
+            identity=(row[key],row['revision'])
+            if group=='objects':
+                fields(row,('video_id','video_revision','frame_timestamp'))
+                identity=(row['video_id'],row['video_revision'],row['frame_timestamp'],*identity)
+            need(identity not in maps[group],'duplicate entity revision'); maps[group][identity]=row
+    def ref(group,id,revision):
+        need(text(id) and integer(revision),'reference ID/revision')
+        row=maps[group].get((id,revision)); need(row is not None,group+' reference revision missing')
+        need(row['status']=='ready',group+' reference unavailable'); return row
+    def asset(id,rev,kind):
+        a=ref('assets',id,rev); need(a['media_kind']==kind,'asset kind'); return a
+    def lineage(row,level='segment'):
+        names=LINEAGE[:{'book':2,'page':4,'story':6,'segment':8}[level]]
+        fields(row,names)
+        b=ref('books',row['book_id'],row['book_revision'])
+        if level=='book': return b
+        p=ref('pages',row['page_id'],row['page_revision'])
+        need(all(p[k]==row[k] for k in LINEAGE[:2]),'page/book revision chain')
+        if level=='page': return p
+        s=ref('stories',row['story_id'],row['story_revision'])
+        need(all(s[k]==row[k] for k in LINEAGE[:4]),'story/page revision chain')
+        if level=='story': return s
+        seg=ref('segments',row['segment_id'],row['segment_revision'])
+        need(all(seg[k]==row[k] for k in LINEAGE[:6]),'segment/story revision chain')
+        return seg
+    paths={}
+    for a in doc['assets']:
+        fields(a,('asset_revision',*LINEAGE,'media_kind','relative_path','sha256','size_bytes','generation_id','attempt_id','source_provider','source_model','source_type'))
+        need(a['asset_revision']==a['revision'] and integer(a['asset_revision']),'asset_revision')
+        need(a['media_kind'] in {'image','audio','video'} and sha(a['sha256']) and integer(a['size_bytes']),'asset hash/size/kind')
+        need(all(text(a[k]) for k in ('generation_id','attempt_id','source_provider','source_model')),'asset producer')
+        need(a['source_provider']=='local-fake' and a['source_type'] in {'mock_image','mock_video','segment_narration','answer_tts'},'offline source type')
+        path=a['relative_path']; need(text(path) and not PurePosixPath(path).is_absolute() and '\\' not in path and ':' not in path and all(p not in {'','.','..'} for p in path.split('/')),'asset path')
+        signature=(a['sha256'],a['size_bytes'],a['generation_id'],a['attempt_id'])
+        need(path not in paths or paths[path]==signature,'asset path conflict'); paths[path]=signature
+    for b in doc['books']:
+        fields(b,('book_revision',)); need(b['book_revision']==b['revision'] and re.fullmatch('[a-z][a-z0-9]{3,11}',b['book_id']),'book ID/revision')
+    for p in doc['pages']:
+        fields(p,('book_id','book_revision','page_revision','page_no','image_asset_id','image_asset_revision'))
+        lineage(p,'book'); need(p['page_revision']==p['revision'] and integer(p['page_no']) and p['page_no']<=99
+            and p['page_id']==f"{p['book_id']}_p{p['page_no']:02d}",'page ID/revision')
+        raw=asset(p['image_asset_id'],p['image_asset_revision'],'image')
+        need(all(raw[k]==p[k] for k in LINEAGE[:4]) and raw['source_type']=='mock_image','image input revision binding')
+    for s in doc['stories']:
+        fields(s,(*LINEAGE[:4],'story_revision','generation_id'))
+        lineage(s,'page'); need(s['story_revision']==s['revision'] and text(s['generation_id']),'story revision/generation')
+    for s in doc['segments']:
+        fields(s,(*LINEAGE[:6],'segment_revision','order','audio_asset_id','audio_asset_revision'))
+        lineage(s,'story'); need(s['segment_revision']==s['revision'] and integer(s['order'])
+            and re.fullmatch(re.escape(s['page_id'])+r'_s\d{2}',s['segment_id']),'segment ID/revision')
+    def context(ctx):
+        fields(ctx,CONTEXT)
+        for idname,revname in zip(LINEAGE[::2],LINEAGE[1::2]):
+            need((ctx[idname] is None)==(ctx[revname] is None),'context revision pair')
+        if ctx['book_id'] is None:
+            need(all(ctx[k] is None for k in CONTEXT),'standalone context'); return
+        lineage(ctx,'book')
+        if ctx['page_id'] is not None: lineage(ctx,'page')
+        else: need(all(ctx[k] is None for k in LINEAGE[4:]),'no page for story/segment')
+        if ctx['story_id'] is not None:
+            story=lineage(ctx,'story'); need(ctx['generation_id']==story['generation_id'],'context generation')
+        else: need(ctx['segment_id'] is None and ctx['generation_id'] is None,'no story generation')
+        if ctx['segment_id'] is not None: lineage(ctx)
+        if ctx['video_id'] is None:
+            need(ctx['video_revision'] is None and ctx['frame_timestamp'] is None,'no invented video timestamp'); return
+        v=ref('videos',ctx['video_id'],ctx['video_revision'])
+        need(all(v[k]==ctx[k] for k in LINEAGE) and v['generation_id']==ctx['generation_id'],'video context lineage')
+        need(integer(ctx['frame_timestamp'],True) and ctx['frame_timestamp']<v['duration_ms'],'clip-local ms')
+    for a in doc['audios']:
+        fields(a,('asset_revision',*LINEAGE,'generation_id','attempt_id','source_provider','source_model','source_type','audio_sha256','duration_ms','turn_id','turn_revision'))
+        raw=asset(a['audio_asset_id'],a['asset_revision'],'audio')
+        need(a['revision']==a['asset_revision'] and integer(a['duration_ms']) and sha(a['audio_sha256']),'audio revision/duration/hash')
+        need(all(a[k]==raw[k] for k in (*LINEAGE,'generation_id','attempt_id','source_provider','source_model','source_type')) and a['audio_sha256']==raw['sha256'],'audio producer/hash binding')
+        if a['source_type']=='segment_narration':
+            seg=lineage(a); story=lineage(a,'story')
+            need(a['generation_id']==story['generation_id'] and a['turn_id'] is None and a['turn_revision'] is None,'narration generation')
+            need(seg['audio_asset_id']==a['audio_asset_id'] and seg['audio_asset_revision']==a['asset_revision'],'segment audio reference')
+        elif a['source_type']=='answer_tts':
+            turn=ref('turns',a['turn_id'],a['turn_revision'])
+            need(a['generation_id']==turn['generation_id'] and all(a[k]==turn['context'][k] for k in LINEAGE),'answer audio context')
+            need(turn['tts_asset_id']==a['audio_asset_id'] and turn['tts_asset_revision']==a['asset_revision'],'turn audio reference')
+        else: raise ValueError('audio source type')
+    for v in doc['videos']:
+        fields(v,(*LINEAGE,'asset_id','asset_revision','generation_id','attempt_id','audio_asset_id','audio_asset_revision','duration_ms','start_ms','end_ms'))
+        seg=lineage(v); story=lineage(v,'story'); raw=asset(v['asset_id'],v['asset_revision'],'video')
+        need(v['generation_id']==story['generation_id'] and all(raw[k]==v[k] for k in (*LINEAGE,'generation_id','attempt_id')) and raw['source_type']=='mock_video','video generation')
+        need(integer(v['start_ms'],True) and integer(v['end_ms']) and integer(v['duration_ms']) and v['end_ms']-v['start_ms']==v['duration_ms'],'video timeline')
+        need(v['audio_asset_id']==seg['audio_asset_id'] and v['audio_asset_revision']==seg['audio_asset_revision'],'video/segment audio')
+        ref('audios',v['audio_asset_id'],v['audio_asset_revision'])
+    for s in doc['stories']:
+        segs=[x for x in doc['segments'] if x['story_id']==s['story_id'] and x['story_revision']==s['story_revision']]
+        need(sorted(x['order'] for x in segs)==list(range(1,len(segs)+1)) and segs,'segment order')
+        clips=sorted([v for v in doc['videos'] if v['story_id']==s['story_id'] and v['story_revision']==s['story_revision']],key=lambda v:v['start_ms'])
+        need(len(clips)==len(segs) and {(v['segment_id'],v['segment_revision']) for v in clips}=={(x['segment_id'],x['segment_revision']) for x in segs},'clip coverage')
+        end=0
+        for v in clips: need(v['start_ms']==end,'timeline gap'); end=v['end_ms']
+    for o in doc['objects']:
+        fields(o,('video_id','video_revision','frame_timestamp','context','normalized_bbox','tracking_id','label','confidence','mask_asset_id'))
+        context(o['context']); need(o['context']['video_id']==o['video_id'] and o['context']['video_revision']==o['video_revision'] and o['context']['frame_timestamp']==o['frame_timestamp'],'object frame')
+        b=o['normalized_bbox']; need(type(b) is list and len(b)==4 and all(numeric(x) and 0<=x<=1 for x in b) and b[0]<b[2] and b[1]<b[3],'normalized bbox')
+        need(numeric(o['confidence']) and 0<=o['confidence']<=1 and text(o['label']) and (o['tracking_id'] is None or text(o['tracking_id'])) and o['mask_asset_id'] is None,'object metadata/mask not approved')
+    for e in doc['interactions']:
+        fields(e,('kind','session_id','context','normalized_click','object_id','object_revision'))
+        need(e['kind'] in {'tap','voice','text'} and re.fullmatch(r'ses_[a-z0-9]{8,32}',e['session_id']),'interaction kind/session')
+        context(e['context'])
+        if e['kind']=='tap':
+            need(e['context']['video_id'] is not None,'tap video required')
+            click=e['normalized_click']; need(type(click) is list and len(click)==2 and all(numeric(x) and 0<=x<1 for x in click),'normalized click')
+            if e['object_id'] is not None:
+                key=(e['context']['video_id'],e['context']['video_revision'],e['context']['frame_timestamp'],e['object_id'],e['object_revision'])
+                need(key in maps['objects'],'tap object revision/frame')
+            else: need(e['object_revision'] is None,'no object revision')
+        else: need(e['normalized_click'] is None and e['object_id'] is None and e['object_revision'] is None,'voice/text cannot invent tap')
+    for c in doc['conversations']:
+        fields(c,('session_id',)); need(re.fullmatch(r'ses_[a-z0-9]{8,32}',c['session_id']),'conversation session')
+    for t in doc['turns']:
+        fields(t,('conversation_id','conversation_revision','interaction_id','interaction_revision','context','input_type','asr_transcript','user_query','answer','generation_id','tts_asset_id','tts_asset_revision'))
+        c=ref('conversations',t['conversation_id'],t['conversation_revision']); e=ref('interactions',t['interaction_id'],t['interaction_revision'])
+        context(t['context']); need(c['session_id']==e['session_id'] and e['context']==t['context'] and e['kind']==t['input_type'],'turn context/type')
+        need(text(t['user_query']) and text(t['answer']) and text(t['generation_id']),'query/answer generation')
+        need(text(t['asr_transcript']) if t['input_type']=='voice' else t['asr_transcript'] is None,'ASR transcript')
+        if t['tts_asset_id'] is not None:
+            a=ref('audios',t['tts_asset_id'],t['tts_asset_revision'])
+            need(a['source_type']=='answer_tts' and a['turn_id']==t['turn_id'] and a['turn_revision']==t['revision'] and a['generation_id']==t['generation_id'],'answer TTS reverse binding')
+        else: need(t['tts_asset_revision'] is None,'no TTS revision')
+    return doc

@@ -4,7 +4,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException
-from starlette.staticfiles import StaticFiles
+from orchestrator.services.vision_supervisor.authorization.asset_policy import AssetFiles
 
 from orchestrator.api.routes import router
 from orchestrator.core.config import Settings
@@ -15,7 +15,7 @@ from orchestrator.services.jobs import Jobs
 from orchestrator.services.storage import Storage
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, *, m1_session_factory=None, m1_assets=None) -> FastAPI:
     settings = settings or Settings()
     storage = Storage(settings)
     if settings.generation_backend == 'member3':
@@ -26,7 +26,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app):
-        app.state.jobs = jobs_class(storage)
+        app.state.jobs = (jobs_class(storage, m1_session_factory=m1_session_factory)
+                          if m1_session_factory is not None and settings.generation_backend == 'member3'
+                          else jobs_class(storage))
         yield
         await app.state.jobs.close()
 
@@ -64,8 +66,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return error(request, 9001, '未预期错误')
 
     app.include_router(router)
+    if m1_assets is not None:
+        from orchestrator.services.offline_protocols.assets import PrivateAssets
+        if type(m1_assets) is not PrivateAssets or settings.deployment_env != 'local' or settings.asset_mode != 'blocked':
+            raise ValueError('Private offline assets require local M1 authority')
+        app.mount('/_m1/assets', m1_assets.http_app(), name='m1-private-assets')
     for directory in ('previews', 'json', 'audios', 'videos'):
-        app.mount('/' + directory, StaticFiles(directory=storage.root / directory), name=directory)
+        app.mount('/' + directory, AssetFiles(directory=storage.root / directory,
+                                             mode=settings.asset_mode), name=directory)
     return app
 
 

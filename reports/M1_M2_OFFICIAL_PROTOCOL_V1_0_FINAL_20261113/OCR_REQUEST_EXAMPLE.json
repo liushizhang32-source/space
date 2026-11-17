@@ -1,0 +1,19 @@
+{
+  "protocol": "m1-vision-worker/0.1",
+  "job_id": "job-offline-example",
+  "page_id": "book01_p03",
+  "generation_id": "generation-fixture-1",
+  "input_revision": 1,
+  "epoch": 1,
+  "attempt_id": "ocr-attempt-fixture-1",
+  "fencing_token": "ocr-token-fixture-1",
+  "stage": "ocr",
+  "image_path": "C:/m1-offline/attempt-ocr-001/input.bin",
+  "image_sha256": "c369baf1451f6e07dc87da1e46af4b368f3e43360c2893c531ae648dadba5984",
+  "result_path": "result.json",
+  "outputs": {
+    "c1": "json/book01_p03_ocr.json",
+    "c2": "json/book01_p03_vlm.json",
+    "sidecar": "json/book01_p03_refs.json"
+  }
+}

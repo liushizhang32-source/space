@@ -1,0 +1,340 @@
+{
+  "note": "Negative wire examples deliberately rejected; wrapper metadata is not a wire object. Their mutation classes are exercised in VALIDATION_LOG.",
+  "cases": [
+    {
+      "name": "cross-page binding",
+      "contract": "VLM_REQUEST",
+      "expected": "REJECT",
+      "payload": {
+        "protocol": "m1-vision-worker/0.1",
+        "job_id": "job-offline-example",
+        "page_id": "book01_p03",
+        "generation_id": "generation-fixture-1",
+        "input_revision": 1,
+        "epoch": 1,
+        "attempt_id": "vlm-attempt-fixture-1",
+        "fencing_token": "vlm-token-fixture-1",
+        "stage": "vlm",
+        "image_path": "C:/m1-offline/attempt-vlm-001/input.bin",
+        "image_sha256": "c369baf1451f6e07dc87da1e46af4b368f3e43360c2893c531ae648dadba5984",
+        "result_path": "result.json",
+        "outputs": {
+          "c1": "json/book01_p03_ocr.json",
+          "c2": "json/book01_p03_vlm.json",
+          "sidecar": "json/book01_p03_refs.json"
+        },
+        "inputs": {
+          "c1": "C:/m1-offline/attempt-vlm-001/c1.json"
+        },
+        "c1_binding": {
+          "identity": {
+            "job_id": "job-offline-example",
+            "page_id": "book01_p04",
+            "generation_id": "generation-fixture-1",
+            "input_revision": 1,
+            "epoch": 1,
+            "attempt_id": "ocr-attempt-fixture-1",
+            "fencing_token": "ocr-token-fixture-1"
+          },
+          "sha256": "acd80ad3f6c82b7500ba9c3364a52c02451b98ccc869376bae94097976a60829",
+          "image_sha256": "c369baf1451f6e07dc87da1e46af4b368f3e43360c2893c531ae648dadba5984"
+        }
+      }
+    },
+    {
+      "name": "cross-revision binding",
+      "contract": "VLM_REQUEST",
+      "expected": "REJECT",
+      "payload": {
+        "protocol": "m1-vision-worker/0.1",
+        "job_id": "job-offline-example",
+        "page_id": "book01_p03",
+        "generation_id": "generation-fixture-1",
+        "input_revision": 1,
+        "epoch": 1,
+        "attempt_id": "vlm-attempt-fixture-1",
+        "fencing_token": "vlm-token-fixture-1",
+        "stage": "vlm",
+        "image_path": "C:/m1-offline/attempt-vlm-001/input.bin",
+        "image_sha256": "c369baf1451f6e07dc87da1e46af4b368f3e43360c2893c531ae648dadba5984",
+        "result_path": "result.json",
+        "outputs": {
+          "c1": "json/book01_p03_ocr.json",
+          "c2": "json/book01_p03_vlm.json",
+          "sidecar": "json/book01_p03_refs.json"
+        },
+        "inputs": {
+          "c1": "C:/m1-offline/attempt-vlm-001/c1.json"
+        },
+        "c1_binding": {
+          "identity": {
+            "job_id": "job-offline-example",
+            "page_id": "book01_p03",
+            "generation_id": "generation-fixture-1",
+            "input_revision": 2,
+            "epoch": 1,
+            "attempt_id": "ocr-attempt-fixture-1",
+            "fencing_token": "ocr-token-fixture-1"
+          },
+          "sha256": "acd80ad3f6c82b7500ba9c3364a52c02451b98ccc869376bae94097976a60829",
+          "image_sha256": "c369baf1451f6e07dc87da1e46af4b368f3e43360c2893c531ae648dadba5984"
+        }
+      }
+    },
+    {
+      "name": "cross-generation binding",
+      "contract": "VLM_REQUEST",
+      "expected": "REJECT",
+      "payload": {
+        "protocol": "m1-vision-worker/0.1",
+        "job_id": "job-offline-example",
+        "page_id": "book01_p03",
+        "generation_id": "generation-fixture-1",
+        "input_revision": 1,
+        "epoch": 1,
+        "attempt_id": "vlm-attempt-fixture-1",
+        "fencing_token": "vlm-token-fixture-1",
+        "stage": "vlm",
+        "image_path": "C:/m1-offline/attempt-vlm-001/input.bin",
+        "image_sha256": "c369baf1451f6e07dc87da1e46af4b368f3e43360c2893c531ae648dadba5984",
+        "result_path": "result.json",
+        "outputs": {
+          "c1": "json/book01_p03_ocr.json",
+          "c2": "json/book01_p03_vlm.json",
+          "sidecar": "json/book01_p03_refs.json"
+        },
+        "inputs": {
+          "c1": "C:/m1-offline/attempt-vlm-001/c1.json"
+        },
+        "c1_binding": {
+          "identity": {
+            "job_id": "job-offline-example",
+            "page_id": "book01_p03",
+            "generation_id": "old",
+            "input_revision": 1,
+            "epoch": 1,
+            "attempt_id": "ocr-attempt-fixture-1",
+            "fencing_token": "ocr-token-fixture-1"
+          },
+          "sha256": "acd80ad3f6c82b7500ba9c3364a52c02451b98ccc869376bae94097976a60829",
+          "image_sha256": "c369baf1451f6e07dc87da1e46af4b368f3e43360c2893c531ae648dadba5984"
+        }
+      }
+    },
+    {
+      "name": "cross-epoch binding",
+      "contract": "VLM_REQUEST",
+      "expected": "REJECT",
+      "payload": {
+        "protocol": "m1-vision-worker/0.1",
+        "job_id": "job-offline-example",
+        "page_id": "book01_p03",
+        "generation_id": "generation-fixture-1",
+        "input_revision": 1,
+        "epoch": 1,
+        "attempt_id": "vlm-attempt-fixture-1",
+        "fencing_token": "vlm-token-fixture-1",
+        "stage": "vlm",
+        "image_path": "C:/m1-offline/attempt-vlm-001/input.bin",
+        "image_sha256": "c369baf1451f6e07dc87da1e46af4b368f3e43360c2893c531ae648dadba5984",
+        "result_path": "result.json",
+        "outputs": {
+          "c1": "json/book01_p03_ocr.json",
+          "c2": "json/book01_p03_vlm.json",
+          "sidecar": "json/book01_p03_refs.json"
+        },
+        "inputs": {
+          "c1": "C:/m1-offline/attempt-vlm-001/c1.json"
+        },
+        "c1_binding": {
+          "identity": {
+            "job_id": "job-offline-example",
+            "page_id": "book01_p03",
+            "generation_id": "generation-fixture-1",
+            "input_revision": 1,
+            "epoch": 2,
+            "attempt_id": "ocr-attempt-fixture-1",
+            "fencing_token": "ocr-token-fixture-1"
+          },
+          "sha256": "acd80ad3f6c82b7500ba9c3364a52c02451b98ccc869376bae94097976a60829",
+          "image_sha256": "c369baf1451f6e07dc87da1e46af4b368f3e43360c2893c531ae648dadba5984"
+        }
+      }
+    },
+    {
+      "name": "stale OCR attempt",
+      "contract": "VLM_REQUEST",
+      "expected": "REJECT",
+      "payload": {
+        "protocol": "m1-vision-worker/0.1",
+        "job_id": "job-offline-example",
+        "page_id": "book01_p03",
+        "generation_id": "generation-fixture-1",
+        "input_revision": 1,
+        "epoch": 1,
+        "attempt_id": "vlm-attempt-fixture-1",
+        "fencing_token": "vlm-token-fixture-1",
+        "stage": "vlm",
+        "image_path": "C:/m1-offline/attempt-vlm-001/input.bin",
+        "image_sha256": "c369baf1451f6e07dc87da1e46af4b368f3e43360c2893c531ae648dadba5984",
+        "result_path": "result.json",
+        "outputs": {
+          "c1": "json/book01_p03_ocr.json",
+          "c2": "json/book01_p03_vlm.json",
+          "sidecar": "json/book01_p03_refs.json"
+        },
+        "inputs": {
+          "c1": "C:/m1-offline/attempt-vlm-001/c1.json"
+        },
+        "c1_binding": {
+          "identity": {
+            "job_id": "job-offline-example",
+            "page_id": "book01_p03",
+            "generation_id": "generation-fixture-1",
+            "input_revision": 1,
+            "epoch": 1,
+            "attempt_id": "stale",
+            "fencing_token": "ocr-token-fixture-1"
+          },
+          "sha256": "acd80ad3f6c82b7500ba9c3364a52c02451b98ccc869376bae94097976a60829",
+          "image_sha256": "c369baf1451f6e07dc87da1e46af4b368f3e43360c2893c531ae648dadba5984"
+        }
+      }
+    },
+    {
+      "name": "clothing null",
+      "contract": "SIDECAR",
+      "expected": "REJECT",
+      "payload": {
+        "schema_version": "vision_refs/0.1",
+        "job_id": "job-offline-example",
+        "page_id": "book01_p03",
+        "generation_id": "generation-fixture-1",
+        "input_revision": 1,
+        "epoch": 1,
+        "attempt_id": "vlm-attempt-fixture-1",
+        "fencing_token": "vlm-token-fixture-1",
+        "c2": {
+          "asset_id": "fixture-c2-1",
+          "schema_version": "1.0",
+          "relative_path": "json/book01_p03_vlm.json",
+          "sha256": "b1402684c7e919b5c53971dd18d71a2522b893d55a152f71146aba159c3321a8"
+        },
+        "source": {
+          "component_mode": "fixture",
+          "model_ref": "fixture-toy-calibrator/1",
+          "prompt_sha256": "4f08d3c39a0022f6a67f88310b36d76dbf8426be6044934874b44aedd916d256",
+          "evidence_ref": "fixture-evidence-v1"
+        },
+        "observations": [
+          {
+            "observation_id": "obs1",
+            "object_id": "book01_p03_o01",
+            "identity_status": "unknown",
+            "visual_description": "synthetic fixture observation",
+            "source_ref": "fixture-evidence-v1",
+            "appearance": {
+              "clothing": null,
+              "visible_features": []
+            },
+            "confidence": {
+              "kind": "unavailable",
+              "value": null,
+              "calibrated": false
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "clothing fabricated empty",
+      "contract": "SIDECAR",
+      "expected": "REJECT",
+      "payload": {
+        "schema_version": "vision_refs/0.1",
+        "job_id": "job-offline-example",
+        "page_id": "book01_p03",
+        "generation_id": "generation-fixture-1",
+        "input_revision": 1,
+        "epoch": 1,
+        "attempt_id": "vlm-attempt-fixture-1",
+        "fencing_token": "vlm-token-fixture-1",
+        "c2": {
+          "asset_id": "fixture-c2-1",
+          "schema_version": "1.0",
+          "relative_path": "json/book01_p03_vlm.json",
+          "sha256": "b1402684c7e919b5c53971dd18d71a2522b893d55a152f71146aba159c3321a8"
+        },
+        "source": {
+          "component_mode": "fixture",
+          "model_ref": "fixture-toy-calibrator/1",
+          "prompt_sha256": "4f08d3c39a0022f6a67f88310b36d76dbf8426be6044934874b44aedd916d256",
+          "evidence_ref": "fixture-evidence-v1"
+        },
+        "observations": [
+          {
+            "observation_id": "obs1",
+            "object_id": "book01_p03_o01",
+            "identity_status": "unknown",
+            "visual_description": "synthetic fixture observation",
+            "source_ref": "fixture-evidence-v1",
+            "appearance": {
+              "clothing": "",
+              "visible_features": []
+            },
+            "confidence": {
+              "kind": "unavailable",
+              "value": null,
+              "calibrated": false
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "unavailable calibrated self-assertion",
+      "contract": "SIDECAR",
+      "expected": "REJECT",
+      "payload": {
+        "schema_version": "vision_refs/0.1",
+        "job_id": "job-offline-example",
+        "page_id": "book01_p03",
+        "generation_id": "generation-fixture-1",
+        "input_revision": 1,
+        "epoch": 1,
+        "attempt_id": "vlm-attempt-fixture-1",
+        "fencing_token": "vlm-token-fixture-1",
+        "c2": {
+          "asset_id": "fixture-c2-1",
+          "schema_version": "1.0",
+          "relative_path": "json/book01_p03_vlm.json",
+          "sha256": "b1402684c7e919b5c53971dd18d71a2522b893d55a152f71146aba159c3321a8"
+        },
+        "source": {
+          "component_mode": "fixture",
+          "model_ref": "fixture-toy-calibrator/1",
+          "prompt_sha256": "4f08d3c39a0022f6a67f88310b36d76dbf8426be6044934874b44aedd916d256",
+          "evidence_ref": "fixture-evidence-v1"
+        },
+        "observations": [
+          {
+            "observation_id": "obs1",
+            "object_id": "book01_p03_o01",
+            "identity_status": "unknown",
+            "visual_description": "synthetic fixture observation",
+            "source_ref": "fixture-evidence-v1",
+            "appearance": {
+              "clothing": "红色上衣",
+              "visible_features": []
+            },
+            "confidence": {
+              "kind": "unavailable",
+              "value": null,
+              "calibrated": true
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

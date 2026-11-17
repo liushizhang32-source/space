@@ -1,0 +1,282 @@
+{
+  "container_note": "Test fixture wrapper only; each sidecar is the wire example. No accepted calibrated=true example until an independent M5 registry is operational.",
+  "examples": [
+    {
+      "name": "Clothing observed",
+      "sidecar": {
+        "schema_version": "vision_refs/0.1",
+        "job_id": "job-offline-example",
+        "page_id": "book01_p03",
+        "generation_id": "generation-fixture-1",
+        "input_revision": 1,
+        "epoch": 1,
+        "attempt_id": "vlm-attempt-fixture-1",
+        "fencing_token": "vlm-token-fixture-1",
+        "c2": {
+          "asset_id": "fixture-c2-1",
+          "schema_version": "1.0",
+          "relative_path": "json/book01_p03_vlm.json",
+          "sha256": "b1402684c7e919b5c53971dd18d71a2522b893d55a152f71146aba159c3321a8"
+        },
+        "source": {
+          "component_mode": "fixture",
+          "model_ref": "fixture-toy-calibrator/1",
+          "prompt_sha256": "4f08d3c39a0022f6a67f88310b36d76dbf8426be6044934874b44aedd916d256",
+          "evidence_ref": "fixture-evidence-v1"
+        },
+        "observations": [
+          {
+            "observation_id": "obs1",
+            "object_id": "book01_p03_o01",
+            "identity_status": "unknown",
+            "visual_description": "synthetic fixture observation",
+            "source_ref": "fixture-evidence-v1",
+            "appearance": {
+              "clothing": "红色上衣",
+              "visible_features": []
+            },
+            "confidence": {
+              "kind": "unavailable",
+              "value": null,
+              "calibrated": false
+            }
+          }
+        ]
+      },
+      "c2_fixture_file": "fixtures/C2_01.json"
+    },
+    {
+      "name": "Clothing unobserved",
+      "sidecar": {
+        "schema_version": "vision_refs/0.1",
+        "job_id": "job-offline-example",
+        "page_id": "book01_p03",
+        "generation_id": "generation-fixture-1",
+        "input_revision": 1,
+        "epoch": 1,
+        "attempt_id": "vlm-attempt-fixture-1",
+        "fencing_token": "vlm-token-fixture-1",
+        "c2": {
+          "asset_id": "fixture-c2-2",
+          "schema_version": "1.0",
+          "relative_path": "json/book01_p03_vlm.json",
+          "sha256": "b1402684c7e919b5c53971dd18d71a2522b893d55a152f71146aba159c3321a8"
+        },
+        "source": {
+          "component_mode": "fixture",
+          "model_ref": "fixture-toy-calibrator/1",
+          "prompt_sha256": "4f08d3c39a0022f6a67f88310b36d76dbf8426be6044934874b44aedd916d256",
+          "evidence_ref": "fixture-evidence-v1"
+        },
+        "observations": [
+          {
+            "observation_id": "obs1",
+            "object_id": "book01_p03_o01",
+            "identity_status": "unknown",
+            "visual_description": "synthetic fixture observation",
+            "source_ref": "fixture-evidence-v1",
+            "appearance": {
+              "visible_features": []
+            },
+            "confidence": {
+              "kind": "unavailable",
+              "value": null,
+              "calibrated": false
+            }
+          }
+        ]
+      },
+      "c2_fixture_file": "fixtures/C2_02.json"
+    },
+    {
+      "name": "Appearance empty",
+      "sidecar": {
+        "schema_version": "vision_refs/0.1",
+        "job_id": "job-offline-example",
+        "page_id": "book01_p03",
+        "generation_id": "generation-fixture-1",
+        "input_revision": 1,
+        "epoch": 1,
+        "attempt_id": "vlm-attempt-fixture-1",
+        "fencing_token": "vlm-token-fixture-1",
+        "c2": {
+          "asset_id": "fixture-c2-3",
+          "schema_version": "1.0",
+          "relative_path": "json/book01_p03_vlm.json",
+          "sha256": "b1402684c7e919b5c53971dd18d71a2522b893d55a152f71146aba159c3321a8"
+        },
+        "source": {
+          "component_mode": "fixture",
+          "model_ref": "fixture-toy-calibrator/1",
+          "prompt_sha256": "4f08d3c39a0022f6a67f88310b36d76dbf8426be6044934874b44aedd916d256",
+          "evidence_ref": "fixture-evidence-v1"
+        },
+        "observations": [
+          {
+            "observation_id": "obs1",
+            "object_id": "book01_p03_o01",
+            "identity_status": "unknown",
+            "visual_description": "synthetic fixture observation",
+            "source_ref": "fixture-evidence-v1",
+            "appearance": {},
+            "confidence": {
+              "kind": "unavailable",
+              "value": null,
+              "calibrated": false
+            }
+          }
+        ]
+      },
+      "c2_fixture_file": "fixtures/C2_03.json"
+    },
+    {
+      "name": "Confidence unavailable",
+      "sidecar": {
+        "schema_version": "vision_refs/0.1",
+        "job_id": "job-offline-example",
+        "page_id": "book01_p03",
+        "generation_id": "generation-fixture-1",
+        "input_revision": 1,
+        "epoch": 1,
+        "attempt_id": "vlm-attempt-fixture-1",
+        "fencing_token": "vlm-token-fixture-1",
+        "c2": {
+          "asset_id": "fixture-c2-4",
+          "schema_version": "1.0",
+          "relative_path": "json/book01_p03_vlm.json",
+          "sha256": "b1402684c7e919b5c53971dd18d71a2522b893d55a152f71146aba159c3321a8"
+        },
+        "source": {
+          "component_mode": "fixture",
+          "model_ref": "fixture-toy-calibrator/1",
+          "prompt_sha256": "4f08d3c39a0022f6a67f88310b36d76dbf8426be6044934874b44aedd916d256",
+          "evidence_ref": "fixture-evidence-v1"
+        },
+        "observations": [
+          {
+            "observation_id": "obs1",
+            "object_id": "book01_p03_o01",
+            "identity_status": "unknown",
+            "visual_description": "synthetic fixture observation",
+            "source_ref": "fixture-evidence-v1",
+            "appearance": {},
+            "confidence": {
+              "kind": "unavailable",
+              "calibrated": false
+            }
+          }
+        ]
+      },
+      "c2_fixture_file": "fixtures/C2_04.json"
+    },
+    {
+      "name": "Confidence model_estimate",
+      "sidecar": {
+        "schema_version": "vision_refs/0.1",
+        "job_id": "job-offline-example",
+        "page_id": "book01_p03",
+        "generation_id": "generation-fixture-1",
+        "input_revision": 1,
+        "epoch": 1,
+        "attempt_id": "vlm-attempt-fixture-1",
+        "fencing_token": "vlm-token-fixture-1",
+        "c2": {
+          "asset_id": "fixture-c2-5",
+          "schema_version": "1.0",
+          "relative_path": "json/book01_p03_vlm.json",
+          "sha256": "b1402684c7e919b5c53971dd18d71a2522b893d55a152f71146aba159c3321a8"
+        },
+        "source": {
+          "component_mode": "fixture",
+          "model_ref": "fixture-toy-calibrator/1",
+          "prompt_sha256": "4f08d3c39a0022f6a67f88310b36d76dbf8426be6044934874b44aedd916d256",
+          "evidence_ref": "fixture-evidence-v1"
+        },
+        "observations": [
+          {
+            "observation_id": "obs1",
+            "object_id": "book01_p03_o01",
+            "identity_status": "unknown",
+            "visual_description": "synthetic fixture observation",
+            "source_ref": "fixture-evidence-v1",
+            "appearance": {},
+            "confidence": {
+              "kind": "model_estimate",
+              "value": 0.7,
+              "calibrated": false
+            }
+          }
+        ]
+      },
+      "c2_fixture_file": "fixtures/C2_05.json"
+    },
+    {
+      "name": "Uncalibrated estimate pending independent M5 evidence",
+      "sidecar": {
+        "schema_version": "vision_refs/0.1",
+        "job_id": "job-offline-example",
+        "page_id": "book01_p03",
+        "generation_id": "generation-fixture-1",
+        "input_revision": 1,
+        "epoch": 1,
+        "attempt_id": "vlm-attempt-fixture-1",
+        "fencing_token": "vlm-token-fixture-1",
+        "c2": {
+          "asset_id": "fixture-c2-6",
+          "schema_version": "1.0",
+          "relative_path": "json/book01_p03_vlm.json",
+          "sha256": "b1402684c7e919b5c53971dd18d71a2522b893d55a152f71146aba159c3321a8"
+        },
+        "source": {
+          "component_mode": "fixture",
+          "model_ref": "fixture-toy-calibrator/1",
+          "prompt_sha256": "4f08d3c39a0022f6a67f88310b36d76dbf8426be6044934874b44aedd916d256",
+          "evidence_ref": "fixture-evidence-v1"
+        },
+        "observations": [
+          {
+            "observation_id": "obs1",
+            "object_id": "book01_p03_o01",
+            "identity_status": "unknown",
+            "visual_description": "synthetic fixture observation",
+            "source_ref": "fixture-evidence-v1",
+            "appearance": {},
+            "confidence": {
+              "kind": "model_estimate",
+              "value": 0.5,
+              "calibrated": false
+            }
+          }
+        ]
+      },
+      "c2_fixture_file": "fixtures/C2_06.json"
+    },
+    {
+      "name": "Empty observations",
+      "sidecar": {
+        "schema_version": "vision_refs/0.1",
+        "job_id": "job-offline-example",
+        "page_id": "book01_p03",
+        "generation_id": "generation-fixture-1",
+        "input_revision": 1,
+        "epoch": 1,
+        "attempt_id": "vlm-attempt-fixture-1",
+        "fencing_token": "vlm-token-fixture-1",
+        "c2": {
+          "asset_id": "fixture-c2-7",
+          "schema_version": "1.0",
+          "relative_path": "json/book01_p03_vlm.json",
+          "sha256": "3ee34f32cc2ef6c10677d26b7dcf96de9c508c8af5655067c0b66977ba0aa93f"
+        },
+        "source": {
+          "component_mode": "fixture",
+          "model_ref": "fixture-toy-calibrator/1",
+          "prompt_sha256": "4f08d3c39a0022f6a67f88310b36d76dbf8426be6044934874b44aedd916d256",
+          "evidence_ref": "fixture-evidence-v1"
+        },
+        "observations": []
+      },
+      "c2_fixture_file": "fixtures/C2_07.json"
+    }
+  ]
+}

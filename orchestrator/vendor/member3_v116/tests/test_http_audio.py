@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from agents.generation.config import Settings
-from agents.generation.errors import AppError, ErrorCode, TTSFailed, TTSUnavailable
-from agents.generation.ids import tts_cache_key
-from agents.generation.tts.client import TTSClient
+from orchestrator.vendor.member3_v116.agents.generation.config import Settings
+from orchestrator.vendor.member3_v116.agents.generation.errors import AppError, ErrorCode, TTSFailed, TTSUnavailable
+from orchestrator.vendor.member3_v116.agents.generation.ids import tts_cache_key
+from orchestrator.vendor.member3_v116.agents.generation.tts.client import TTSClient
 
 
 class FakeResponse:
