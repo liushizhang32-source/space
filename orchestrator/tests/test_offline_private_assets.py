@@ -90,6 +90,22 @@ def test_symlink_denied_when_OS_supports_creation(private,tmp_path):
     except OSError as exc:pytest.skip('OS lacks file symlink creation permission: '+str(exc.winerror))
     with pytest.raises(Denied):assets.read(rig[3],token,'audio1',project='M1',job='req')
 
+def test_actual_directory_junction_denied(private,tmp_path):
+    import subprocess
+    rig,b,assets,token,reader,path,raw,ref=private
+    parent=path.parent;path.unlink();parent.rmdir()
+    outside=tmp_path/'junction-target';outside.mkdir();(outside/path.name).write_bytes(raw)
+    assert parent.absolute().is_relative_to(tmp_path.absolute()) and outside.absolute().is_relative_to(tmp_path.absolute())
+    result=subprocess.run(['cmd','/c','mklink','/J',str(parent),str(outside)],capture_output=True)
+    assert result.returncode==0,result.stderr
+    with pytest.raises(Denied):assets.read(rig[3],token,'audio1',project='M1',job='req')
+
+def test_private_profile_cannot_share_offline_mock_static_root(private,tmp_path,monkeypatch):
+    rig,b,assets,token,reader,path,raw,ref=private
+    with pytest.raises(ValueError):create_app(Settings(data_dir=tmp_path/'demo',asset_mode='offline_mock'),m1_assets=assets)
+    monkeypatch.setenv('M1_ASSET_MODE','offline_mock')
+    with pytest.raises(ValueError):tts_app(TTSSettings(data_dir=tmp_path/'demo-tts',tts_engine='silent'),m1_assets=assets)
+
 def test_output_id_immutable_and_production_injection_denied(private,tmp_path):
     rig,b,assets,token,reader,path,raw,ref=private
     with pytest.raises(Denied):assets.register_output(rig[3],b['token'],b['identity'],{**ref,'sha256':'0'*64})

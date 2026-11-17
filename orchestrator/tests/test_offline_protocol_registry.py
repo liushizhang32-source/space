@@ -22,7 +22,16 @@ def test_frozen_copy_unchanged():
     # The original manifest hashes every original frozen artifact except itself.
     root=D/'frozen_m1_m2_v1_0';lines=(root/'MANIFEST.sha256').read_text(encoding='utf-8').splitlines()
     for line in lines:
-        if not line.strip():continue
+        if not line.strip() or line.startswith('#'):continue
         digest,name=line.split(None,1);name=name.strip().lstrip('*')
         assert hashlib.sha256((root/name).read_bytes()).hexdigest()==digest
     assert 'FROZEN' in (root/'M1_M2_OFFLINE_PROTOCOL_V1.0.md').read_text(encoding='utf-8')
+
+def test_all_102_frozen_bytes_and_committed_blobs_match_source_lock():
+    import subprocess
+    lock=json.loads((D/'FROZEN_SOURCE_LOCK.json').read_text(encoding='utf-8'))
+    assert len(lock)==102
+    for name,expected in lock.items():
+        assert hashlib.sha256((D/'frozen_m1_m2_v1_0'/name).read_bytes()).hexdigest()==expected
+        raw=subprocess.check_output(['git','-c',f'safe.directory={ROOT.as_posix()}','-C',str(ROOT),'show','HEAD:docs/protocols/frozen_m1_m2_v1_0/'+name])
+        assert hashlib.sha256(raw).hexdigest()==expected
