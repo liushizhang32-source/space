@@ -1,0 +1,19 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: 安装最小依赖
+        run: pip install -r requirements.txt
+      - name: 契约与流水线测试（无需 GPU / 无需模型）
+        run: python tests/run_all.py

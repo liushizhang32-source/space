@@ -1,0 +1,73 @@
+[V1.2.1 真实 OCR 冒烟] 2026-11-11 22:40:39
+command: VISION_OCR_BACKEND=paddle PADDLE_PDX_CACHE_HOME=./models/.paddlex python scripts/m2_vision_worker.py request.json
+cwd: .tmp\smoke2_ocr (attempt 私有目录)
+image: samples\hard\p01.png
+exit=0 wall=8.0s
+result.json: {
+  "protocol": "m1-vision-worker/0.1",
+  "identity": {
+    "job_id": "job_smoke_v121",
+    "page_id": "smoke01_p01",
+    "generation_id": "gen_smoke_v121",
+    "input_revision": 1,
+    "epoch": 1,
+    "attempt_id": "att_smoke_v121",
+    "fencing_token": "tok_smoke_v121"
+  },
+  "code": 0,
+  "msg": "ok",
+  "artifacts": {
+    "c1": "json/smoke01_p01_ocr.json"
+  }
+}
+
+c1: {
+  "schema_version": "1.0",
+  "book_id": "smoke01",
+  "page_id": "smoke01_p01",
+  "page_no": 1,
+  "status": "ok",
+  "image_width": 1000,
+  "image_height": 1414,
+  "text_blocks": [
+    {
+      "block_id": "smoke01_p01_t01",
+      "order": 1,
+      "text": "我也想吃胡萝卜",
+      "bbox": [
+        502,
+        422,
+        771,
+        463
+      ],
+      "confidence": 0.9734
+    },
+    {
+      "block_id": "smoke01_p01_t02",
+      "order": 2,
+      "text": "森林里的新朋友",
+      "bbox": [
+        77,
+        1129,
+        432,
+        1184
+      ],
+      "confidence": 0.9998
+    },
+    {
+      "block_id": "smoke01_p01_t03",
+      "order": 3,
+      "text": "小兔子在树下遇到了小鸟和蘑菇。",
+      "bbox": [
+        78,
+        1204,
+        627,
+        1250
+      ],
+      "confidence": 0.9981
+    }
+  ],
+  "page_confidence": 0.9925,
+  "elapsed_ms": 7028
+}
+
