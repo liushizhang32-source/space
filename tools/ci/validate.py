@@ -44,6 +44,15 @@ def validate():
                 assert re.fullmatch(r'actions/[a-z-]+@[0-9a-f]{40}', step['uses'])
             assert 'secrets.' not in str(step)
     assert 'pull_request_target' not in path.read_text('utf-8')
+    unified=yaml.load((ROOT/'.github/workflows/unified-acceptance.yml').read_text('utf-8'),Loader=yaml.BaseLoader)
+    assert unified['permissions']=={'contents':'read'}
+    assert set(unified['on'])=={'pull_request','workflow_dispatch'}
+    full=unified['jobs']['full-offline'];assert full['runs-on']=='windows-latest'
+    assert any('--require-no-skips' in step.get('run','') for step in full['steps'])
+    assert 'github.event.pull_request.head.sha' in full['steps'][0]['with']['ref']
+    for step in full['steps']:
+        assert 'continue-on-error' not in step and 'secrets.' not in str(step)
+        if 'uses' in step:assert re.fullmatch(r'actions/[a-z-]+@[0-9a-f]{40}',step['uses'])
     for file in (ROOT/'tools/ci').rglob('*'):
         if file.is_file() and file.suffix in ('.py', '.ini', '.txt', '.md', '.json'):
             data = file.read_text('utf-8-sig')

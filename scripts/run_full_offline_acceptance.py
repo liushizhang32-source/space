@@ -47,7 +47,7 @@ def main():
         if tests is None:cmd=[sys.executable,'-B','tools/ci/run.py','--target',str(W),'--output',str(O/'team-ci'),'--group',label[3:]]
         else:cmd=[sys.executable,'-B','-m','pytest','-c',str(W/'pytest.ini'),*tests,'-o','addopts=','-p','no:cacheprovider','-v','--tb=short','--basetemp',str(O/('tmp-'+label)),'--junitxml',str(O/(label+'.xml'))]
         this_env=dict(env)
-        if label=='m2':this_env['PYTHONPATH']+=os.pathsep+os.pathsep.join(args.extra_site)
+        if label in {'m2','unified'}:this_env['PYTHONPATH']+=os.pathsep+os.pathsep.join(args.extra_site)
         start=time.monotonic()
         with (O/(label+'.log')).open('w',encoding='utf-8') as out:r=subprocess.run(cmd,cwd=W,env=this_env,stdout=out,stderr=subprocess.STDOUT)
         after=snapshot();match=before==after
