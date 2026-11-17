@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -165,6 +166,8 @@ def run_page(
     page_no = page_no_of(page_id)
 
     try:
+        if m1 is None and (os.getenv('M1_DEPLOYMENT_ENV','local')!='local' or os.getenv('M1_ASSET_MODE','blocked')!='offline_mock'):
+            raise AppError(ErrorCode.UNAUTHORIZED,'无M1会话的流水线只允许显式local offline_mock演示')
         if cancelled is not None and cancelled():
             raise AppError(ErrorCode.UNAVAILABLE, "页面生成已取消")
         if m1 is not None:

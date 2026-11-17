@@ -132,3 +132,19 @@ def test_multi_page_audio_alias_is_bound_to_exact_asset_token(tmp_path,monkeypat
             response=client.get('/'+entry['path'],headers=entry['headers'])
             assert response.status_code==200 and hashlib.sha256(response.content).hexdigest()==entry['sha256']
         assert app.state.m1_runtime.authority.totals()['held']==2000
+
+@pytest.mark.parametrize('environment',['dev','production','local'])
+def test_direct_pipeline_and_story_file_fallback_cannot_bypass_M1(tmp_path,monkeypatch,environment):
+    from orchestrator.vendor.member3_v116.agents.generation import pipeline
+    from orchestrator.vendor.member3_v116.agents.generation.story import builder
+    from orchestrator.vendor.member3_v116.agents.generation.config import Settings as MemberSettings
+    from orchestrator.vendor.member3_v116.agents.generation.errors import AppError
+    monkeypatch.setenv('M1_DEPLOYMENT_ENV',environment);monkeypatch.setenv('M1_ASSET_MODE','blocked')
+    reads=[]
+    def no_read(*args):reads.append(args);pytest.fail('Private OCR/VLM was read before M1 authorization')
+    monkeypatch.setattr(builder,'read_json',no_read)
+    config=MemberSettings(data_dir=tmp_path/'private')
+    result=pipeline.run_page('book01_p03','3-6',config)
+    assert result.status=='failed' and result.error['code']==1005
+    with pytest.raises(AppError) as denied:builder.build_page_story('book01_p03','3-6',config)
+    assert int(denied.value.code)==1005 and reads==[]

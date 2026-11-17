@@ -17,6 +17,9 @@ _wheels/
 # 运行时产物（DATA_DIR 由环境变量决定，默认 ./data）
 data/
 _demo_data/
+local-data/
+**/.m1-state/
+**/.orchestrator/
 *.log
 
 # 测试与临时目录

@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import time
+import os
 from dataclasses import dataclass
 
 from pydantic import ValidationError
@@ -284,6 +285,8 @@ def build_page_story(
         raise AppError(ErrorCode.INVALID_PARAM, f"age_level 只支持 3-6 / 6-9，收到 {age_level!r}")
 
     files = PageFiles(settings, page_id)
+    if (ocr is None or vlm is None) and (os.getenv('M1_DEPLOYMENT_ENV','local')!='local' or os.getenv('M1_ASSET_MODE','blocked')!='offline_mock'):
+        raise AppError(ErrorCode.UNAUTHORIZED,'本地OCR/VLM输入仅允许显式离线演示；正式调用必须由M1提供授权输入')
     ocr_doc = ocr if ocr is not None else read_json(files.ocr)
     vlm_doc = vlm if vlm is not None else read_json(files.vlm)
     # 输入页身份校验：防止拿错页的 ocr/vlm 生成故事
