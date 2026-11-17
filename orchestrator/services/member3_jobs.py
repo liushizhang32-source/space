@@ -51,9 +51,6 @@ class Member3Jobs(Jobs):
     def checkpoint(self):
         if self.settings.persist_state:self.storage.write_state('jobs',{key:job.model_dump(mode='json') for key,job in self.jobs.items()})
 
-    def get(self,job_id):
-        result=super().get(job_id);self.checkpoint();return result
-
     async def work(self, fn, *args):
         if self._shutting_down:
             raise asyncio.CancelledError

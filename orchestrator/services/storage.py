@@ -58,7 +58,8 @@ class Storage:
         try:
             with os.fdopen(fd,'w',encoding='utf-8') as stream:
                 json.dump(data,stream,ensure_ascii=False,separators=(',',':'));stream.flush();os.fsync(stream.fileno())
-            os.replace(temp,folder/f'{name}.json')
+            from orchestrator.services.integration_reference.recovery import replace_offline
+            replace_offline(temp,folder/f'{name}.json')
         finally:Path(temp).unlink(missing_ok=True)
 
     def capture(self, content: bytes, filename: str, content_type: str,
