@@ -1,0 +1,1 @@
+明确MOCK演示：本地PIL绘图动画+测试音，不是Wan或CosyVoice；演示绘本两页仅供无Key功能演示。

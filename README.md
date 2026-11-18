@@ -1,5 +1,11 @@
 # 纸书智伴：M1 / M2 / M3 与真实模型工作室
 
+## iPad / Safari / PWA 入口
+
+双击 `INSTALL.bat` → `START_IPAD_SERVER.bat`，按电脑显示的二维码、家庭证书指纹和设备配对引导连接iPad。
+完整中文说明：[使用说明_iPad.md](使用说明_iPad.md)。儿童界面与家长Key/费用配置分离；无Key可上传、真实OCR与明确MOCK演示。
+真机证书信任需在iPad手动完成；不关闭防火墙、不自动开放公网。
+
 M1 负责授权、预算、任务与资产；M2 负责视觉；M3 负责故事、TTS 和视频。
 公共 API / C1 / C2 / 冻结 M1–M2 V1.0 保持不变。新增 P1–P5 仍为
 **PROPOSED**，未激活 Generation DRAFT，也未获得生产准入。

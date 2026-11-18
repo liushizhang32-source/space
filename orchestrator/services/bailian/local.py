@@ -61,6 +61,14 @@ def normalize_image(raw):
 
 def parse_upload(raw,filename):
     if len(raw)>MAX_FILE:raise IntegrationError('UPLOAD_FILE_TOO_LARGE')
+    if filename.lower().endswith(('.heic','.heif')):
+        try:
+            from pillow_heif import open_heif
+            heif=open_heif(raw)
+            if heif.size[0]*heif.size[1]>MAX_PIXELS:raise ValueError()
+            im=Image.frombytes(heif.mode,heif.size,heif.data,'raw',heif.mode,heif.stride).convert('RGB')
+            out=io.BytesIO();im.save(out,format='PNG');return [normalize_image(out.getvalue())]
+        except Exception:raise IntegrationError('HEIC_INVALID') from None
     if filename.lower().endswith('.pdf'):
         import pymupdf
         result=[]
