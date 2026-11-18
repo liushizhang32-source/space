@@ -1,5 +1,28 @@
 # 统一装配架构
 
+2026-11-18增加[真实模型工作室](REAL_MODEL_STUDIO.md)，独立入口`orchestrator.bailian_app`。
+以下保留原离线装配及其冻结接口边界；不把其中的fixture/silent当成真实模型。
+
+```mermaid
+flowchart LR
+ UI[本机页面 / 上传PDF与多页] --> M1[原M1 Authority / 统一150元 / Token与计划]
+ M1 --> OCR[真实本地PaddleOCR与OpenCV]
+ OCR --> VLM[云端Qwen3-VL / 冻结C1-C2]
+ VLM --> Story[Qwen-Plus / 全书故事与分镜 / C3]
+ Story --> TTS[CosyVoice3 / 单一官方女声]
+ TTS --> Wan[Wan I2V / 按实测配音时长 / 持久Task ID]
+ Wan --> Media[FFmpeg连续时间轴 / 中文字幕 / 完整解码]
+ Media --> Pub[M1同库私有资产 / 会话授权 / 播放下载]
+ M1 --> Journal[原锚保护cloud_documents / UNKNOWN / 不重放POST]
+ Q[当前页文字或语音问题] --> ASR[可选Qwen-ASR]
+ ASR --> Agent[Qwen-Plus Agent]
+ Agent --> TTS
+```
+
+新profile复用原Authority的授权、账本、资产BLOB、签名/锚和WindowsTree进程监管。
+原`settle`不接受dashscope的fixture账单；实际账务保持UNKNOWN。新元数据没有第二套权限或余额。
+输入开始Attempt后不可改排；引用准确的book/job/generation/input_revision和页SHA。详见P5。
+
 ```mermaid
 flowchart TD
   Capture[冻结 Capture HTTP] --> Store[M1持有的图片与页面元数据]
@@ -18,7 +41,7 @@ flowchart TD
   Consumer --> Ledger[原Authority.settle / UNKNOWN保护]
 ```
 
-`orchestrator/local_runtime.py` 是唯一新增的服务装配入口；不导入测试 rig。
+原离线装配入口是`orchestrator/local_runtime.py`；不导入测试 rig。
 `tools/runtime/m2_entry.py` 只将已提交 M2 包加入隔离解释器，再调用其原 `main`，
 不伪造输出、不重建 Worker。真实后端不在冻结 V1 Worker 的许可范围。
 

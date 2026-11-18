@@ -32,6 +32,11 @@ _pytest_tmp/
 _pyt_tmp/
 _pkg_verify/
 _verify_data/
+.runtime/
+.tools/
+*.seed
+*.sqlite
+*.retained-anchor
 pytest-cache-files-*/
 
 # 编辑器

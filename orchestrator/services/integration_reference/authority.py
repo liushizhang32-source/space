@@ -95,18 +95,20 @@ class Authority(VisionLifecycle):
     """
     _require=staticmethod(require)
 
-    def __init__(self, path, anchor, kms, clock, *, offline_test=False):
+    def __init__(self, path, anchor, kms, clock, *, offline_test=False, local_cloud=False):
         require(offline_test is True and getattr(kms, 'offline_only', False), 'PRODUCTION_BLOCKED')
         self.path, self.anchor = Path(path).resolve(), Path(anchor).resolve()
         require(self.path != self.anchor and self.path.is_file() and self.anchor.is_file(), 'UNPROVISIONED')
         self.kms, self.clock = kms, clock
+        # Explicit local development profile; never activates production or DRAFT wires.
+        self.local_cloud = local_cloud is True
         with self.tx() as db:
             for key_id,key in self.kms.public_keys().items():
                 self._register_key(db,key_id,key.public_bytes(serialization.Encoding.Raw,serialization.PublicFormat.Raw))
         self.kms.observe(str(self.path),self._key_event)
 
     @classmethod
-    def provision(cls, path, anchor, kms, clock, *, offline_test=False):
+    def provision(cls, path, anchor, kms, clock, *, offline_test=False, local_cloud=False):
         require(offline_test is True, 'PRODUCTION_BLOCKED')
         path, anchor = Path(path).resolve(), Path(anchor).resolve()
         require(not path.exists() and not anchor.exists() and path != anchor
@@ -137,14 +139,14 @@ class Authority(VisionLifecycle):
         db.commit(); db.close()
         obj=object.__new__(cls);obj.path=path;obj.anchor=anchor
         db=sqlite3.connect(path);obj._write_anchor(obj._state(db));db.close()
-        return cls(path,anchor,kms,clock,offline_test=True)
+        return cls(path,anchor,kms,clock,offline_test=True,local_cloud=local_cloud)
 
     @staticmethod
     def _state(db):
         tables=('meta','projects','grants','tokens','current','attempts','attempt_context','key_registry','vision_current','generation_upstream','stage_attempts','reservations','assets','requests','events')
         # PROPOSED output protocol: protect its records with this same retained
         # authority anchor. No second security ledger or balance is introduced.
-        tables+=tuple(t for t in ('output_assets','revoked_output_jobs') if db.execute(
+        tables+=tuple(t for t in ('output_assets','revoked_output_jobs','cloud_documents') if db.execute(
             'SELECT 1 FROM sqlite_master WHERE type=? AND name=?',('table',t)).fetchone())
         data={t:[[{'hex':v.hex()} if isinstance(v,bytes) else v for v in r] for r in db.execute('SELECT * FROM '+t+' ORDER BY 1,2')] for t in tables}
         data['schema']=[list(row) for row in db.execute('SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name')]
@@ -282,7 +284,9 @@ class Authority(VisionLifecycle):
 
     def begin(self, service, project, page, request_id, amount, asset_names, *, ttl=120, lineage=None, final_messages=None, provider='fixture', model='offline', _db=None, upstream_identity=None):
         integer(amount,1);integer(ttl,1,300);safe_name(page)
-        require(provider=='fixture' and model=='offline','PROVIDER_BLOCKED')
+        require(provider=='fixture' and model=='offline' or
+                getattr(self,'local_cloud',False) and provider=='dashscope' and model=='cloud-workflow-plan/1',
+                'PROVIDER_BLOCKED')
         messages=final_messages if final_messages is not None else [{'role':'user','content':'offline fixture'}]
         require(type(messages) is list and messages,'INVALID_PROMPT')
         ordered=[]
@@ -379,9 +383,9 @@ class Authority(VisionLifecycle):
             self.event(db,'asset_file_read',attempt_id=a['id'],name=name,subject=s['subject'])
         return raw
 
-    def submit(self, service, token, identity, result):
+    def submit(self, service, token, identity, result, *, _db=None):
         require(type(result) is bytes and len(result)<=1048576,'INVALID_RESULT')
-        with self.tx() as db:
+        with (self.tx() if _db is None else nullcontext(_db)) as db:
             s,t,a=self._bound(db,service,token,identity,live=False)
             result_hash=digest(result)
             if a['state'] in ('SUBMITTED','UNKNOWN','DONE'):
@@ -397,6 +401,8 @@ class Authority(VisionLifecycle):
         """Trusted offline billing adapter only, never an M3 self-reported charge."""
         integer(actual);require(type(receipt) is str and receipt,'INVALID_RECEIPT')
         with self.tx() as db:
+            context=db.execute('SELECT provider FROM attempt_context WHERE id=?',(attempt,)).fetchone()
+            require(not context or context[0]=='fixture','REAL_BILLING_ADAPTER_REQUIRED')
             r=db.execute('SELECT * FROM reservations WHERE id=?',(attempt,)).fetchone();require(r,'UNKNOWN_ATTEMPT')
             if r['state']=='SETTLED':
                 require(r['actual']==actual and r['receipt']==receipt,'IDEMPOTENCY_CONFLICT');return
@@ -406,8 +412,8 @@ class Authority(VisionLifecycle):
             db.execute("UPDATE reservations SET state='SETTLED',actual=?,receipt=? WHERE id=?",(actual,receipt,attempt))
             db.execute("UPDATE attempts SET state='DONE' WHERE id=?",(attempt,));self.event(db,'settled',attempt_id=attempt,actual=actual)
 
-    def cancel(self, attempt):
-        with self.tx() as db:
+    def cancel(self, attempt, *, _db=None):
+        with (self.tx() if _db is None else nullcontext(_db)) as db:
             a=db.execute('SELECT * FROM attempts WHERE id=?',(attempt,)).fetchone();require(a,'UNKNOWN_ATTEMPT')
             if a['state']=='CANCELLED':return
             require(a['state']=='RESERVED','UNKNOWN_RETAINS_BUDGET')
@@ -468,6 +474,7 @@ class Authority(VisionLifecycle):
             s,t,a=self._bound(db,service,token,identity,live=False)
             require(a['state'] in ('SUBMITTED','DONE'),'RESULT_REQUIRED')
             context=dict(db.execute('SELECT * FROM attempt_context WHERE id=?',(a['id'],)).fetchone())
+            require(context['provider']=='fixture' and context['model']=='offline','OFFLINE_PROVENANCE_ONLY')
             body=canonical(dict(profile='offline-provenance/0.1',key_id=self.kms.active,
                 identity=identity,inputs=json.loads(t['assets']),result_sha256=a['result'],
                 prompt_sha256=context['prompt_sha256'],provider=context['provider'],model=context['model'],source_mode='fixture'))

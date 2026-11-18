@@ -26,5 +26,12 @@
     "version": "1.0",
     "status": "PROPOSED",
     "clauses": 14
+  },
+  {
+    "id": "P5",
+    "file": "M1_LOCAL_CLOUD_WORKFLOW_PROTOCOL.md",
+    "version": "1.0",
+    "status": "PROPOSED",
+    "clauses": 16
   }
 ]

@@ -1,0 +1,6 @@
+-r orchestrator/tests/requirements-unified-test.txt
+dashscope==2.1.0
+pymupdf==1.28.2
+PyYAML==6.0.3
+playwright==1.65.2
+imageio-ffmpeg==0.6.0

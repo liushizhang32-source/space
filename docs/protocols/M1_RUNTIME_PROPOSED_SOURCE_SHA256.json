@@ -6,8 +6,8 @@
   "changes": {
     "orchestrator/services/integration_reference/authority.py": {
       "before_sha256": "f60eb7848cee5575915c3ad7f6eb900875b5dfbdf59ca00f5d5dea2a9169a76d",
-      "after_sha256": "21a8375696232d023c9d9776fb0fa61fc3f43c89022b6b6a8404a371ced502fe",
-      "reason": "Anchor output metadata and task revocations in the same Authority"
+      "after_sha256": "e8c18fe10f716d80a6096dc9b172f8364104d937360472ca917c744408c8de41",
+      "reason": "Retain anchored output metadata; explicit local-development cloud-plan provider, same-anchor workflow journal, atomic original submit/dispatch, fixture billing/provenance blocked for cloud attempts; defaults and fixed budget/UNKNOWN rules unchanged"
     },
     "orchestrator/services/integration_reference/recovery.py": {
       "before_sha256": "ed0febf22a6b5f0d0c7e517892ad872c4d6501a5ceae48726586e990320b067e",

@@ -1,6 +1,10 @@
 # 启动、恢复和正式交付限制
 
-目前只提供README中的Windows本地离线启动。必须显式设置M1_LOCAL_RUNTIME=offline_fixture、
+2026-11-18新增本机真实模型开发入口：`scripts/install_all.ps1`、`scripts/start_system.ps1`，
+仅监听127.0.0.1:8765。所有工具在隔离环境，固定跨目录M1本地账户，Key仅内存、费用上限显式确认。
+操作与恢复见[工作室说明](REAL_MODEL_STUDIO.md)。不部署生产，真实云端质量待Key后验收。
+
+原README中的Windows本地离线启动必须显式设置M1_LOCAL_RUNTIME=offline_fixture、
 M1_DEPLOYMENT_ENV=local；内部强制blocked资产模式。不能以此配置部署生产或公网服务。
 Linux默认API/成员三媒体回归继续用于兼容测试，M1冻结固定句柄和Job Object运行时仍需Windows。
 

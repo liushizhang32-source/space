@@ -1,10 +1,28 @@
-# 纸书智伴：M1 / M2 / M3 统一集成候选
+# 纸书智伴：M1 / M2 / M3 与真实模型工作室
 
 M1 负责授权、预算、任务与资产；M2 负责视觉；M3 负责故事、TTS 和视频。
-公共 API / C1 / C2 / 冻结 M1–M2 V1.0 保持不变。新增 P1–P4 仍为
+公共 API / C1 / C2 / 冻结 M1–M2 V1.0 保持不变。新增 P1–P5 仍为
 **PROPOSED**，未激活 Generation DRAFT，也未获得生产准入。
 
-当前可运行的是显式 **Windows 本地离线装配**：实际调用已提交的 M2 CLI，
+## 真实模型工作室（本轮入口）
+
+```powershell
+./scripts/install_all.ps1
+./scripts/start_system.ps1
+```
+
+打开 http://127.0.0.1:8765，在配置区输入百炼Key，再上传图片/PDF、多页排序、选择年龄、
+查看费用并确认生成。真实本地PaddleOCR/OpenCV/FFmpeg；云端Qwen3-VL-Plus/Qwen-Plus/
+CosyVoice3/Wan由M1统一预算和授权。Key仅后端内存；全项目150元；提交未知不自动退款重发。
+界面没有假成功模式。当前真实云端质量仍待Key后验证，PRODUCTION_READY=NO。
+
+完整操作、成员四接入、取消/恢复及测试见[工作室说明](docs/REAL_MODEL_STUDIO.md)、
+[官方型号与价格](docs/OFFICIAL_MODEL_CATALOG.md)、[P5开发扩展](docs/protocols/M1_LOCAL_CLOUD_WORKFLOW_PROTOCOL.md)。
+原离线入口与测试继续保留，以下为其兼容说明。
+
+## 原离线装配（兼容与冻结接口回归）
+
+原有显式 **Windows 本地离线装配**：实际调用已提交的 M2 CLI，
 视觉模型使用 fixture；M3 默认模板 Story + silent 音频 + 真实 ffmpeg 视频。
 可将 TTS/LLM HTTP 客户端接入本地服务做接口验收，但这不证明真实模型质量。
 冻结 Worker 禁止真实后端，不能把 fixture 切换成 real 来冒充验收。

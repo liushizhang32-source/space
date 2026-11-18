@@ -1,5 +1,12 @@
 # 版本来源和兼容边界
 
+REAL-MODEL-FINAL-INTEGRATION-001从PR12准确Head
+`aa78ed1f239316cf5dfb85a5b5273755a73dbacc`建立独立本地分支
+`feature/real-model-final-integration-001`，非强制快进更新同一个PR12远端分支。
+不覆盖旧unified工作树。M2原子树不变，复用其Qwen安全解析器；M1仍是原Authority，
+仅显式开发profile与同锚日志等变更列入PROPOSED源码after SHA，原before和source-audit不动。
+新增代码、协议P5、独立UI及新测试均独立列明；所有执行结果以本轮最终tested_commit为准。
+
 2026-11-17从GitHub实际读取：
 
 |来源|准确Commit|用途|

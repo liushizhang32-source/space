@@ -1,0 +1,7 @@
+# Separate environment: PaddleX requires PyYAML 6.0.2; app CI needs 6.0.3.
+paddlepaddle==3.2.0
+paddleocr==3.3.2
+paddlex==3.3.13
+numpy==2.3.5
+opencv-contrib-python==4.10.0.84
+PyYAML==6.0.2

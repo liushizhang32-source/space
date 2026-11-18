@@ -79,3 +79,22 @@ Version 1.0 / PROPOSED。测试文件按规则组执行正反向向量，不以�
 |P4-14|冻结V1.0 F01–F08优先、无wire变更|M1_M2_M3_GOVERNANCE_AND_ACCEPTANCE_PROTOCOL.md|registry.json|scripts/run_full_offline_acceptance.py|orchestrator/tests/test_offline_protocol_registry.py|M1管理|
 
 外部依赖：真实供应商账单验证、真实模型/后端取消、生产身份/KMS、真实语料质量、ChatGPT冻结/合并批准。本轮以隔离离线适配验证，不称完成这些外部能力。
+
+|扩展条款|边界|规范|实现|测试|责任|
+|---|---|---|---|---|---|
+|P5-01|本机云工作流，不改冻结V1|M1_LOCAL_CLOUD_WORKFLOW_PROTOCOL.md|bailian / 原Authority / WindowsTree|orchestrator/tests/real_model|M1/M2/M3|
+|P5-02|本机云工作流，不改冻结V1|M1_LOCAL_CLOUD_WORKFLOW_PROTOCOL.md|bailian / 原Authority / WindowsTree|orchestrator/tests/real_model|M1/M2/M3|
+|P5-03|本机云工作流，不改冻结V1|M1_LOCAL_CLOUD_WORKFLOW_PROTOCOL.md|bailian / 原Authority / WindowsTree|orchestrator/tests/real_model|M1/M2/M3|
+|P5-04|本机云工作流，不改冻结V1|M1_LOCAL_CLOUD_WORKFLOW_PROTOCOL.md|bailian / 原Authority / WindowsTree|orchestrator/tests/real_model|M1/M2/M3|
+|P5-05|本机云工作流，不改冻结V1|M1_LOCAL_CLOUD_WORKFLOW_PROTOCOL.md|bailian / 原Authority / WindowsTree|orchestrator/tests/real_model|M1/M2/M3|
+|P5-06|本机云工作流，不改冻结V1|M1_LOCAL_CLOUD_WORKFLOW_PROTOCOL.md|bailian / 原Authority / WindowsTree|orchestrator/tests/real_model|M1/M2/M3|
+|P5-07|本机云工作流，不改冻结V1|M1_LOCAL_CLOUD_WORKFLOW_PROTOCOL.md|bailian / 原Authority / WindowsTree|orchestrator/tests/real_model|M1/M2/M3|
+|P5-08|本机云工作流，不改冻结V1|M1_LOCAL_CLOUD_WORKFLOW_PROTOCOL.md|bailian / 原Authority / WindowsTree|orchestrator/tests/real_model|M1/M2/M3|
+|P5-09|本机云工作流，不改冻结V1|M1_LOCAL_CLOUD_WORKFLOW_PROTOCOL.md|bailian / 原Authority / WindowsTree|orchestrator/tests/real_model|M1/M2/M3|
+|P5-10|本机云工作流，不改冻结V1|M1_LOCAL_CLOUD_WORKFLOW_PROTOCOL.md|bailian / 原Authority / WindowsTree|orchestrator/tests/real_model|M1/M2/M3|
+|P5-11|本机云工作流，不改冻结V1|M1_LOCAL_CLOUD_WORKFLOW_PROTOCOL.md|bailian / 原Authority / WindowsTree|orchestrator/tests/real_model|M1/M2/M3|
+|P5-12|本机云工作流，不改冻结V1|M1_LOCAL_CLOUD_WORKFLOW_PROTOCOL.md|bailian / 原Authority / WindowsTree|orchestrator/tests/real_model|M1/M2/M3|
+|P5-13|本机云工作流，不改冻结V1|M1_LOCAL_CLOUD_WORKFLOW_PROTOCOL.md|bailian / 原Authority / WindowsTree|orchestrator/tests/real_model|M1/M2/M3|
+|P5-14|本机云工作流，不改冻结V1|M1_LOCAL_CLOUD_WORKFLOW_PROTOCOL.md|bailian / 原Authority / WindowsTree|orchestrator/tests/real_model|M1/M2/M3|
+|P5-15|本机云工作流，不改冻结V1|M1_LOCAL_CLOUD_WORKFLOW_PROTOCOL.md|bailian / 原Authority / WindowsTree|orchestrator/tests/real_model|M1/M2/M3|
+|P5-16|本机云工作流，不改冻结V1|M1_LOCAL_CLOUD_WORKFLOW_PROTOCOL.md|bailian / 原Authority / WindowsTree|orchestrator/tests/real_model|M1/M2/M3|
