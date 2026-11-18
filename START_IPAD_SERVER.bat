@@ -6,5 +6,5 @@ if errorlevel 1 (
  powershell.exe -NoProfile -Command "Start-Process -FilePath $env:IPAD_START_BAT -Verb RunAs"
  exit /b
 )
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\start_ipad.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\bootstrap_ipad.ps1
 pause

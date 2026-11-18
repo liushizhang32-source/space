@@ -5,10 +5,12 @@ try {
     $reuseExisting=$false
     if (Test-Path .runtime/ipad-network.json) {
         $existing=Get-Content .runtime/ipad-network.json -Raw | ConvertFrom-Json
-        & $AppPython scripts/ipad_control.py check 2>$null
-        if ($LASTEXITCODE -eq 0) {
-            $reuseExisting=$true
-        }
+        # Offline is expected on first start. Windows PowerShell 5 treats native
+        # stderr as terminating under ErrorActionPreference=Stop, even redirected.
+        try {
+            & $AppPython scripts/ipad_control.py check 2>$null
+            if ($LASTEXITCODE -eq 0) { $reuseExisting=$true }
+        } catch { $reuseExisting=$false }
     }
     if (!$reuseExisting) {
         & $AppPython scripts/ipad_network.py
