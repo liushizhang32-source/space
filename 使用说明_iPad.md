@@ -25,7 +25,7 @@
 
 ## 家长与凭据
 
-家长口令哈希存储，管理会话5分钟到期，提供锁定按钮；设备配对码一次性、5分钟到期并限速。会话Cookie为Secure/HttpOnly/SameSite=Strict，写入需CSRF，校验Origin/Host与局域网来源。API Key只在电脑后端内存或DASHSCOPE_API_KEY环境变量中，不在前端/PWA缓存/源码/日志/交付包里，重启后重新输入。
+家长口令哈希存储；按用户选择，家长会话长期保持并跨后端重启恢复，主动锁定、清除浏览器Cookie或重设口令后失效。只持久化会话令牌的SHA256引用，不保存原始Cookie；提供锁定按钮；设备配对码一次性、5分钟到期并限速。会话Cookie为Secure/HttpOnly/SameSite=Strict，写入需CSRF，校验Origin/Host与局域网来源。API Key只在电脑后端内存或DASHSCOPE_API_KEY环境变量中，不在前端/PWA缓存/源码/日志/交付包里，重启后重新输入。
 
 家长在配置区输入Key并安全保存，再进行不计费认证检查；型号目录不代表模型权限。必须在百炼账户确认权限与费用，真实生成才能开始。本地M1签名和家庭CA不是生产KMS，P1—P5仍为PROPOSED，未开启生产部署或自动合并。
 

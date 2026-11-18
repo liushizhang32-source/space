@@ -80,6 +80,36 @@ def test_parent_key_not_echoed_and_lock(household):
         assert c.post('/ipad/lock',json={}).status_code==200 and c.get('/studio/config').status_code==401
     assert all(secret.encode() not in p.read_bytes() for p in e.authority.root.rglob('*') if p.is_file())
 
+def test_parent_login_persists_without_deadline_and_resets_on_pin_change(tmp_path,monkeypatch):
+    d=Devices(tmp_path);d.set_pin('test-parent-permanent');token,csrf=d.session('parent')
+    assert token not in d.path.read_text() and d.lookup(token)['expires'] is None
+    reopened=Devices(tmp_path);assert reopened.lookup(token)['csrf']==csrf
+    monkeypatch.setattr(time,'time',lambda:4_000_000_000)
+    assert reopened.lookup(token)['role']=='parent'
+    reopened.set_pin('new-parent-password')
+    assert reopened.lookup(token) is None and d.lookup(token) is None
+
+def test_parent_http_login_survives_restart_and_logout_stays_revoked(tmp_path,monkeypatch):
+    device_root=tmp_path/'devices';d=Devices(device_root);d.set_pin('test-parent-123')
+    def app(devices):
+        return create_app(engine=BookEngine(tmp_path/'m1'),devices=devices,hosts={'testserver'})
+    with TestClient(app(d),base_url='https://testserver') as first:
+        response=first.post('/ipad/login',json={'pin':'test-parent-123'})
+        cookie=response.headers['set-cookie'].lower()
+        assert 'max-age=315360000' in cookie and 'secure' in cookie and 'httponly' in cookie and 'samesite=strict' in cookie
+        token=first.cookies.get('ipad_session')
+        future=time.time()+7*86400
+    monkeypatch.setattr(time,'time',lambda:future)
+    with TestClient(app(Devices(device_root)),base_url='https://testserver') as restarted:
+        restarted.cookies.set('ipad_session',token)
+        session=restarted.get('/ipad/session');assert session.status_code==200 and session.json()['role']=='parent'
+        assert restarted.get('/studio/session').status_code==200
+        assert restarted.get('/studio/config').status_code==200
+        assert restarted.post('/ipad/lock',json={},headers={'X-iPad-CSRF':session.json()['csrf']}).status_code==200
+    with TestClient(app(Devices(device_root)),base_url='https://testserver') as after_logout:
+        after_logout.cookies.set('ipad_session',token)
+        assert after_logout.get('/ipad/session').status_code==401
+
 @pytest.mark.parametrize('size',[(768,1024),(1024,768),(820,1180),(1180,820)])
 def test_webkit_ipad_layout_upload_demo(household,tmp_path,size):
     from playwright.sync_api import sync_playwright,expect

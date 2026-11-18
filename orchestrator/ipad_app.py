@@ -12,22 +12,37 @@ class Devices:
     def __init__(self,root):
         self.root=Path(root);self.root.mkdir(parents=True,exist_ok=True);self.path=self.root/'ipad-devices.json'
         self.data=json.loads(self.path.read_bytes()) if self.path.exists() else {'devices':{},'pin':None}
-        self.sessions={};self.code=None;self.expires=0;self.failures={};self.allowances={}
-    def save(self):
+        self.sessions=dict(self.data.get('parent_sessions',{}));self.code=None;self.expires=0;self.failures={};self.allowances={}
+    def save(self,*,auth_change=False):
+        if not auth_change and self.path.exists():
+            current=json.loads(self.path.read_bytes())
+            self.data['pin']=current['pin'];self.data['parent_sessions']=current.get('parent_sessions',{})
         tmp=self.path.with_suffix('.tmp');tmp.write_text(json.dumps(self.data),encoding='utf-8');tmp.replace(self.path)
     def set_pin(self,pin):
         if not isinstance(pin,str) or len(pin)<8:raise ValueError('PIN至少8位')
-        salt=secrets.token_bytes(16);self.data['pin']={'salt':salt.hex(),'hash':hashlib.scrypt(pin.encode(),salt=salt,n=16384,r=8,p=1).hex()};self.save()
+        if self.path.exists():self.data=json.loads(self.path.read_bytes())
+        salt=secrets.token_bytes(16);self.data['pin']={'salt':salt.hex(),'hash':hashlib.scrypt(pin.encode(),salt=salt,n=16384,r=8,p=1).hex()}
+        self.data['parent_sessions']={};self.sessions={k:v for k,v in self.sessions.items() if v['role']!='parent'};self.save(auth_change=True)
     def verify(self,pin):
+        if self.path.exists():self.data=json.loads(self.path.read_bytes())
         p=self.data['pin'];return p and hmac.compare_digest(p['hash'],hashlib.scrypt(pin.encode(),salt=bytes.fromhex(p['salt']),n=16384,r=8,p=1).hex())
     def pairing(self):self.code=secrets.token_urlsafe(9);self.expires=time.time()+300;return self.code
     def session(self,role,device=None):
         token=secrets.token_urlsafe(32);csrf=secrets.token_urlsafe(32)
-        self.sessions[hashlib.sha256(token.encode()).hexdigest()]={'role':role,'csrf':csrf,'expires':time.time()+(300 if role=='parent' else 86400),'device':device}
+        digest=hashlib.sha256(token.encode()).hexdigest()
+        self.sessions[digest]={'role':role,'csrf':csrf,'expires':None if role=='parent' else time.time()+86400,'device':device}
+        if role=='parent':
+            if self.path.exists():self.data=json.loads(self.path.read_bytes())
+            self.data.setdefault('parent_sessions',{})[digest]=self.sessions[digest];self.save(auth_change=True)
         return token,csrf
     def lookup(self,token):
-        s=self.sessions.get(hashlib.sha256((token or '').encode()).hexdigest())
-        if not s or s['expires']<time.time():return None
+        digest=hashlib.sha256((token or '').encode()).hexdigest();s=self.sessions.get(digest)
+        if not s or s['expires'] is not None and s['expires']<time.time():return None
+        if s['role']=='parent':
+            # A separate local password-reset process invalidates durable sessions
+            # too. Read only the hashed references, never persist the raw cookie.
+            current=json.loads(self.path.read_bytes())
+            if digest not in current.get('parent_sessions',{}):return None
         if s['device'] and not self.data['devices'].get(s['device'],{}).get('enabled'):return None
         return s
 
@@ -37,7 +52,7 @@ def create_app(*,engine=None,root=None,hosts=None,devices=None):
     app=FastAPI(lifespan=core.router.lifespan_context,docs_url=None,openapi_url=None);app.state.engine=engine;app.state.devices=devices
     core.state.request_shutdown=lambda:getattr(app.state,'request_shutdown',lambda:None)()
     def reply(data,role,device=None):
-        token,csrf=devices.session(role,device);r=JSONResponse(dict(**data,csrf=csrf,role=role));r.set_cookie('ipad_session',token,secure=True,httponly=True,samesite='strict',max_age=86400);return r
+        token,csrf=devices.session(role,device);r=JSONResponse(dict(**data,csrf=csrf,role=role));r.set_cookie('ipad_session',token,secure=True,httponly=True,samesite='strict',max_age=10*365*86400 if role=='parent' else 86400);return r
     @app.middleware('http')
     async def security(request,call_next):
         host=request.url.hostname;peer=request.client.host if request.client else ''
@@ -136,7 +151,7 @@ def create_app(*,engine=None,root=None,hosts=None,devices=None):
         return await run_in_threadpool(engine.ask,permit['job'],d['page_no'],d['question'],permit['cap'],True,secrets.token_hex(16))
     @app.post('/ipad/lock')
     def lock(request:Request):
-        token=request.cookies.get('ipad_session','');devices.sessions.pop(hashlib.sha256(token.encode()).hexdigest(),None)
+        token=request.cookies.get('ipad_session','');digest=hashlib.sha256(token.encode()).hexdigest();devices.sessions.pop(digest,None);devices.data=json.loads(devices.path.read_bytes());devices.data.setdefault('parent_sessions',{}).pop(digest,None);devices.save(auth_change=True)
         r=JSONResponse({'locked':True});r.delete_cookie('ipad_session',secure=True,httponly=True,samesite='strict');return r
     @app.post('/ipad/ask-audio')
     async def ask_audio(request:Request):
