@@ -17,6 +17,9 @@ _wheels/
 # 运行时产物（DATA_DIR 由环境变量决定，默认 ./data）
 data/
 _demo_data/
+local-data/
+**/.m1-state/
+**/.orchestrator/
 *.log
 
 # 测试与临时目录
@@ -29,6 +32,11 @@ _pytest_tmp/
 _pyt_tmp/
 _pkg_verify/
 _verify_data/
+.runtime/
+.tools/
+*.seed
+*.sqlite
+*.retained-anchor
 pytest-cache-files-*/
 
 # 编辑器

@@ -1,0 +1,60 @@
+name: Real Model Readiness
+on:
+  pull_request:
+    branches: [dev, main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: real-model-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  key-free-real-local:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Native media tools
+        shell: pwsh
+        run: |
+          choco install ffmpeg --no-progress -y
+          if ($LASTEXITCODE -ne 0) { throw 'FFmpeg installation failed' }
+      - name: Install isolated app and real OCR environments
+        shell: pwsh
+        run: |
+          ./scripts/install_all.ps1 -PythonPath (Get-Command python).Source
+          if ($LASTEXITCODE -ne 0) { throw 'Real local environment installation failed' }
+      - name: Exact head readiness with cloud network blocked
+        shell: pwsh
+        run: |
+          . ./scripts/studio_common.ps1
+          Set-StudioEnvironment
+          & $AppPython scripts/run_real_model_acceptance.py --output "$env:RUNNER_TEMP/real-model-results"
+          if ($LASTEXITCODE -ne 0) { throw 'Real local / mock cloud acceptance failed' }
+      - name: Collect raw evidence
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP/real-model-upload" | Out-Null
+          if (Test-Path "$env:RUNNER_TEMP/real-model-results") {
+            Get-ChildItem "$env:RUNNER_TEMP/real-model-results" -File | Copy-Item -Destination "$env:RUNNER_TEMP/real-model-upload"
+          }
+          if (Test-Path .runtime) {
+            Get-ChildItem .runtime -Filter 'install-check-*' -File | Copy-Item -Destination "$env:RUNNER_TEMP/real-model-upload"
+            if (Test-Path .runtime/tools.json) { Copy-Item .runtime/tools.json "$env:RUNNER_TEMP/real-model-upload/tools.json" }
+          }
+          git rev-parse HEAD | Out-File "$env:RUNNER_TEMP/real-model-upload/actual-checkout-sha.txt" -Encoding utf8
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: real-model-exact-head
+          path: ${{ runner.temp }}/real-model-upload/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30

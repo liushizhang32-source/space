@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "mode",
+    "event_id",
+    "project_id",
+    "attempt_id",
+    "result_sha256",
+    "actual_fen",
+    "receipt_id",
+    "outcome"
+  ],
+  "properties": {
+    "version": {
+      "const": "1.0"
+    },
+    "mode": {
+      "const": "offline_fixture"
+    },
+    "event_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "project_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "attempt_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "result_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "actual_fen": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 15000
+    },
+    "receipt_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "outcome": {
+      "const": "SETTLED"
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "command": [
+    "C:\\Users\\16173\\Documents\\ChatGPT\\\u4eba\u5de5\u667a\u80fd+\\reports\\M1-M3-RUNTIME-001\\test-env\\Scripts\\python.exe",
+    "-B",
+    "-m",
+    "pytest",
+    "-c",
+    "C:\\Users\\16173\\Documents\\ChatGPT\\\u4eba\u5de5\u667a\u80fd+\\reports\\M1-M3-IMPLEMENTATION-001\\ci-only-assembly\\pytest.ini",
+    "orchestrator/vendor/member3_v116/tests",
+    "orchestrator/tests/test_member3_integration.py",
+    "orchestrator/tests/test_member3_lifecycle.py",
+    "orchestrator/tests/test_member3_m1_callchain.py",
+    "-o",
+    "addopts=",
+    "-p",
+    "no:cacheprovider",
+    "-v",
+    "--tb=short",
+    "--basetemp",
+    "C:\\Users\\16173\\Documents\\ChatGPT\\\u4eba\u5de5\u667a\u80fd+\\reports\\M1-M3-IMPLEMENTATION-001\\tmp-full",
+    "--junitxml",
+    "C:\\Users\\16173\\Documents\\ChatGPT\\\u4eba\u5de5\u667a\u80fd+\\reports\\M1-M3-IMPLEMENTATION-001\\M3_FULL_TEST_RESULTS.xml"
+  ],
+  "cwd": "C:\\Users\\16173\\Documents\\ChatGPT\\\u4eba\u5de5\u667a\u80fd+\\reports\\M1-M3-IMPLEMENTATION-001\\ci-only-assembly",
+  "exit": 0,
+  "seconds": 99.375,
+  "status": "CI_ONLY",
+  "network": "external blocked; loopback only"
+}

@@ -7,14 +7,14 @@ import json
 
 import pytest
 
-from agents.generation.config import Settings
-from agents.generation.errors import AppError, ErrorCode
-from agents.generation.story.builder import build_page_story
-from agents.generation.storage import PageFiles
-from agents.generation.tts.api import TTSRequest, synthesize_tts
-from agents.generation.tts.client import TTSClient
-from agents.generation.tts.service import create_app
-from agents.generation.video import compose_video
+from orchestrator.vendor.member3_v116.agents.generation.config import Settings
+from orchestrator.vendor.member3_v116.agents.generation.errors import AppError, ErrorCode
+from orchestrator.vendor.member3_v116.agents.generation.story.builder import build_page_story
+from orchestrator.vendor.member3_v116.agents.generation.storage import PageFiles
+from orchestrator.vendor.member3_v116.agents.generation.tts.api import TTSRequest, synthesize_tts
+from orchestrator.vendor.member3_v116.agents.generation.tts.client import TTSClient
+from orchestrator.vendor.member3_v116.agents.generation.tts.service import create_app
+from orchestrator.vendor.member3_v116.agents.generation.video import compose_video
 
 BLOCKED_TERM = "打架"
 

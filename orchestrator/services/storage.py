@@ -5,6 +5,8 @@ import secrets
 import shutil
 import threading
 import warnings
+import os
+import tempfile
 from pathlib import Path
 
 from PIL import Image, UnidentifiedImageError
@@ -32,6 +34,33 @@ class Storage:
         self.lock = threading.RLock()
         for folder in ('uploads', 'previews', 'json', 'audios', 'videos', 'logs'):
             (self.root / folder).mkdir(parents=True, exist_ok=True)
+        if settings.persist_state:
+            self.pages=self.read_state('pages')
+            for pid,page in self.pages.items():
+                if page['page_id']!=pid or page['original']!=f"uploads/{pid}_orig.{Path(page['original']).suffix[1:]}" or page['preview']!=f'previews/{pid}_preview.jpg':
+                    raise ValueError('Capture checkpoint path mismatch')
+                from orchestrator.api.models import CaptureForm
+                CaptureForm(book_id=page['book_id'],page_no=page['page_no'])
+                if pid!=f"{page['book_id']}_p{page['page_no']:02d}":raise ValueError('Capture checkpoint identity mismatch')
+
+    def read_state(self,name):
+        path=self.root/'.orchestrator'/f'{name}.json'
+        if not path.exists():return {}
+        raw=path.read_bytes()
+        if len(raw)>16*1024*1024:raise ValueError('Checkpoint too large')
+        data=json.loads(raw)
+        if type(data) is not dict:raise ValueError('Invalid checkpoint')
+        return data
+
+    def write_state(self,name,data):
+        folder=self.root/'.orchestrator';folder.mkdir(exist_ok=True)
+        fd,temp=tempfile.mkstemp(prefix=name+'-',suffix='.tmp',dir=folder)
+        try:
+            with os.fdopen(fd,'w',encoding='utf-8') as stream:
+                json.dump(data,stream,ensure_ascii=False,separators=(',',':'));stream.flush();os.fsync(stream.fileno())
+            from orchestrator.services.integration_reference.recovery import replace_offline
+            replace_offline(temp,folder/f'{name}.json')
+        finally:Path(temp).unlink(missing_ok=True)
 
     def capture(self, content: bytes, filename: str, content_type: str,
                 page_no: int, book_id: str | None) -> CaptureData:
@@ -64,9 +93,12 @@ class Storage:
             (self.root / original).write_bytes(content)
             preview.thumbnail((1024, 1024))
             preview.save(self.root / preview_path, format='JPEG')
+            revision=self.pages.get(page_id,{}).get('input_revision',0)+1
             self.pages[page_id] = dict(book_id=book_id, page_id=page_id, page_no=page_no,
                                        image_width=width, image_height=height,
-                                       original=original, preview=preview_path)
+                                       original=original, preview=preview_path,
+                                       original_sha256=hashlib.sha256(content).hexdigest(),input_revision=revision)
+            if self.settings.persist_state:self.write_state('pages',self.pages)
             return result
 
     def write_model(self, page_id: str, kind: str, model: BaseModel):

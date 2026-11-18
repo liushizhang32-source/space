@@ -1,0 +1,64 @@
+"""Deterministic local fake provider, with existing supervised vision fixtures.
+
+Caller supplies an admin-reviewed local WorkerSpec; no network/provider SDK.
+Output contains JSON mock evidence only, never a claimed playable video.
+"""
+import json
+import threading
+
+from .core import STAGES
+from ..vision_supervisor.supervisor import Generation, Fences
+
+REQUIRED = {'mock_story.json','mock_video.json','mock_audio.json'}
+
+
+def verify_mock(documents):
+    if not REQUIRED <= documents.keys():
+        raise ValueError('required mock assets missing')
+    for name in REQUIRED:
+        doc=json.loads(documents[name])
+        if doc != {'mode':'mock','kind':name,'playable':False}:
+            raise ValueError('mock asset profile mismatch')
+
+
+def run_mock(core, jid, supervisor, gate, image, size, spec, *, fault=None):
+    if spec.execution_scope!='process_tree' or spec.backend is not None or spec.environment:
+        raise ValueError('offline mock runner rejects service backends and model credentials')
+    j=core.get(jid)
+    core.check(j,j['generation_id'],j['epoch'])
+    fences=Fences()
+    record=Generation(jid,j['page_id'],j['generation_id'],j['revision'],j['epoch'])
+    fences.pages[record.page_id]=record
+    fences.serial[record.page_id]=threading.Lock()
+    generation,epoch=j['generation_id'],j['epoch']
+    current='ocr'
+    def begin(stage):
+        state=core.get(jid)['stages'][stage]
+        if state=='pending': core.transition(jid,stage,'running',generation,epoch)
+    def end(stage):
+        if core.get(jid)['stages'][stage]=='running':
+            core.transition(jid,stage,'ok',generation,epoch)
+    try:
+        begin('ocr')
+        c1=supervisor.run(record,fences,'ocr',lambda _:spec,image)
+        gate.c1(c1,record.page_id,size); end('ocr')
+        current='vlm'; begin('vlm')
+        c2=supervisor.run(record,fences,'vlm',lambda _:spec,image,c1=c1)
+        gate.accept(record,fences,c1,c2,size); end('vlm')
+        for stage in STAGES[2:-1]:
+            current=stage; begin(stage)
+            if stage=='video_submit':
+                aid=core.begin_attempt(jid,'deterministic-local-mock',generation,epoch)
+                # No real task was submitted. Persist all three observations separately.
+                core.client_exited(aid)
+                core.confirm_mock_terminal(aid,proof={'mode':'mock','attempt_id':aid,'terminal':True})
+                core.settle(jid,'zero:'+aid,0,attempt_id=aid)
+            end(stage)
+        current='render'; begin('render')
+        docs={n:json.dumps({'mode':'mock','kind':n,'playable':False}).encode() for n in REQUIRED}
+        core.publish(jid,record,fences,gate,c1,c2,size,docs,verify=verify_mock,fault=fault)
+        end('render'); core.release(jid)
+        return core.get(jid)
+    except Exception as exc:
+        core.fail(jid,current,getattr(exc,'code',9001))
+        raise

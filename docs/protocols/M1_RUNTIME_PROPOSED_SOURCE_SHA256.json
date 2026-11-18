@@ -1,0 +1,18 @@
+{
+  "version": "1.0",
+  "status": "PROPOSED",
+  "scope": "CI_ONLY",
+  "base_source_audit_sha256": "f1b890074fec5a4c0f996d903adaa36462fd7d5d02a15fd8c765d336bae89272",
+  "changes": {
+    "orchestrator/services/integration_reference/authority.py": {
+      "before_sha256": "f60eb7848cee5575915c3ad7f6eb900875b5dfbdf59ca00f5d5dea2a9169a76d",
+      "after_sha256": "e8c18fe10f716d80a6096dc9b172f8364104d937360472ca917c744408c8de41",
+      "reason": "Retain anchored output metadata; explicit local-development cloud-plan provider, same-anchor workflow journal, atomic original submit/dispatch, fixture billing/provenance blocked for cloud attempts; defaults and fixed budget/UNKNOWN rules unchanged"
+    },
+    "orchestrator/services/integration_reference/recovery.py": {
+      "before_sha256": "ed0febf22a6b5f0d0c7e517892ad872c4d6501a5ceae48726586e990320b067e",
+      "after_sha256": "5582c0b4290a94ba0053481bcdadfc4b4ed23b3228e4f237d431f7084de2853a",
+      "reason": "Bounded retry of same atomic rename on transient Windows sharing errors; persistent denial remains fatal"
+    }
+  }
+}

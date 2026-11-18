@@ -1,0 +1,10 @@
+### vlm smoke
+command: python scripts/m2_vision_worker.py C:\Users\zhc\Documents\deepseek-harness\default-workspace\paperbook-ai\.tmp\smoke_vlm\request.json
+cwd: C:\Users\zhc\Documents\deepseek-harness\default-workspace\paperbook-ai\.tmp\smoke_vlm
+exit=1
+
+[m2-worker] stage=vlm page=smoke01_p01 code=3004 transient=False
+
+files:
+request.json
+result.json

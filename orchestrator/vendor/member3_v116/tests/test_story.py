@@ -4,19 +4,19 @@ from pathlib import Path
 
 import pytest
 
-from agents.generation.config import Settings
-from agents.generation.errors import AppError, ErrorCode, StoryInputError
-from agents.generation.schemas import StoryDoc
-from agents.generation.story.builder import build_page_story
-from agents.generation.tts.client import TTSClient
-from agents.generation.tts.engine import estimate_duration_sec
+from orchestrator.vendor.member3_v116.agents.generation.config import Settings
+from orchestrator.vendor.member3_v116.agents.generation.errors import AppError, ErrorCode, StoryInputError
+from orchestrator.vendor.member3_v116.agents.generation.schemas import StoryDoc
+from orchestrator.vendor.member3_v116.agents.generation.story.builder import build_page_story
+from orchestrator.vendor.member3_v116.agents.generation.tts.client import TTSClient
+from orchestrator.vendor.member3_v116.agents.generation.tts.engine import estimate_duration_sec
 
 
 class FailingEngine:
     name = "failing"
 
     def synthesize(self, *args, **kwargs):
-        from agents.generation.errors import TTSFailed
+        from orchestrator.vendor.member3_v116.agents.generation.errors import TTSFailed
 
         raise TTSFailed("合成失败")
 
@@ -174,7 +174,7 @@ def test_scene_filled_when_vlm_has_no_description(
 def test_post_generation_safety_blocks_unsafe_story(
     media_settings: Settings, sample_ocr: dict, sample_vlm: dict, monkeypatch
 ):
-    from agents.generation.story.draft import DraftSegment, StoryDraft
+    from orchestrator.vendor.member3_v116.agents.generation.story.draft import DraftSegment, StoryDraft
 
     def fake_draft(state, age_level, settings):
         return StoryDraft(
@@ -183,7 +183,7 @@ def test_post_generation_safety_blocks_unsafe_story(
             model_name="fake-model",
         )
 
-    monkeypatch.setattr("agents.generation.story.builder.generate_draft", fake_draft)
+    monkeypatch.setattr("orchestrator.vendor.member3_v116.agents.generation.story.builder.generate_draft", fake_draft)
     settings = media_settings.replace(safety_enabled=True, safety_blocklist=("打架",))
 
     with pytest.raises(AppError) as info:

@@ -1,0 +1,503 @@
+"""M1-S01..S18 accelerated framework tests; real 30s tests live separately."""
+from dataclasses import asdict, replace
+from pathlib import Path
+import json
+import os
+import sys
+import threading
+import time
+
+import pytest
+
+from orchestrator.services.vision_supervisor.gate import Gate
+from orchestrator.services.vision_supervisor.pipeline import AtomicStore, VisionPipeline
+from orchestrator.services.vision_supervisor.supervisor import (
+    Cancelled, Fences, Snapshot, Supervisor, VisionError, WorkerSpec, retryable, unique_json)
+
+FAKE = Path(__file__).parent/'fixtures/m1_vision_worker.py'
+
+
+@pytest.mark.parametrize('fault', ['missing', 'schema', 'page', 'revision', 'image_hash', 'c1_hash', 'image_changed'])
+def test_round2_C1_rejected_before_backend(rig, fault):
+    import hashlib
+    c1 = rig[3].run(rig[1], rig[0], 'ocr', lambda n: spec(), rig[-2])
+    if fault == 'missing':
+        c1 = None
+    elif fault == 'revision':
+        c1 = replace(c1, identity=replace(c1.identity, input_revision=2))
+    elif fault == 'image_hash':
+        c1 = replace(c1, image_sha256='0'*64)
+    elif fault == 'c1_hash':
+        c1 = replace(c1, c1_sha256='0'*64)
+    elif fault == 'image_changed':
+        rig[-2].write_bytes(b'replaced image')
+    else:
+        doc = unique_json(c1.documents['c1'])
+        doc['schema_version' if fault == 'schema' else 'page_id'] = 'invalid'
+        raw = json.dumps(doc).encode()
+        c1 = replace(c1, documents={'c1': raw}, c1_sha256=hashlib.sha256(raw).hexdigest())
+    rig[2].clear()
+    with pytest.raises(VisionError) as caught:
+        rig[3].run(rig[1],rig[0],'vlm',lambda n: spec(),rig[-2],c1=c1)
+    assert caught.value.code == 1002
+    assert not any(e['event']=='started' for e in rig[2])
+    assert list(rig[3].root.iterdir()) == []
+
+
+@pytest.mark.parametrize('key', ['VISION_EMIT_EXTRA', 'VISION_UNKNOWN', 'PYTHONPATH', 'PATH'])
+def test_round2_env_rejected_before_launch(rig, key):
+    with pytest.raises(VisionError) as caught:
+        rig[3].run(rig[1],rig[0],'ocr',lambda n: replace(spec(), environment=((key,'secret'),)),rig[-2])
+    assert caught.value.code == 1002
+    assert not any(e['event']=='started' for e in rig[2])
+    assert 'secret' not in repr(rig[2])
+
+
+def test_round2_env_no_parent_inheritance(rig, monkeypatch):
+    from orchestrator.services.vision_supervisor import supervisor as module
+    original = module.start_tree
+    captured = {}
+    def start(argv, work, env, log, **kwargs):
+        captured.update(env)
+        return original(argv, work, env, log, **kwargs)
+    monkeypatch.setattr(module, 'start_tree', start)
+    monkeypatch.setenv('VISION_EMIT_EXTRA','1')
+    monkeypatch.setenv('VISION_API_KEY','parent-secret')
+    rig[3].run(rig[1],rig[0],'ocr',lambda n: replace(spec(), environment=(('VISION_API_KEY','injected-secret'),)),rig[-2])
+    assert 'VISION_EMIT_EXTRA' not in captured
+    assert captured['VISION_API_KEY'] == 'injected-secret'
+    assert 'injected-secret' not in repr(rig[2])
+    assert captured['HF_HOME'].startswith(str(rig[3].root))
+
+
+@pytest.mark.parametrize('fault', ['identity', 'hash', 'object', 'confidence', 'late', 'clothing_null'])
+def test_round2_candidate_refs_strict(rig, fault):
+    c1=rig[3].run(rig[1],rig[0],'ocr',lambda n: spec(),rig[-2])
+    c2=rig[3].run(rig[1],rig[0],'vlm',lambda n: spec(),rig[-2],c1=c1)
+    refs=unique_json(c2.documents['sidecar'])
+    if fault=='identity':
+        refs['identity']={k:refs.pop(k) for k in asdict(c2.identity)}
+    elif fault=='hash': refs['c2']['sha256']='0'*64
+    elif fault=='object': refs['observations'][0]['object_id']='foreign'
+    elif fault=='confidence': refs['observations'][0]['confidence']['value']=True
+    elif fault=='clothing_null': refs['observations'][0]['appearance']['clothing']=None
+    else: refs['generation_id']='late-generation'
+    docs=dict(c2.documents, sidecar=json.dumps(refs).encode())
+    with pytest.raises(VisionError):
+        rig[5].accept(rig[1],rig[0],c1,replace(c2,documents=docs),(96,128))
+    assert rig[1].c2_sha256 is None
+
+
+@pytest.mark.parametrize('mode', ['confirmed', 'failed', 'missing', 'late', 'exception'])
+def test_round2_backend_cancel_proof(rig, mode):
+    identity=rig[0].attempt(rig[1])
+    class Backend:
+        def settle(self, identity, task_ref, *, cancel):
+            if mode=='exception': raise RuntimeError('secret')
+            if mode=='missing': return None
+            return dict(identity=asdict(replace(identity, attempt_id='old') if mode=='late' else identity),
+                task_ref=task_ref, request_result='cancelled' if mode!='failed' else 'failed',
+                termination_confirmed=True, confirmed_at=time.time())
+    if mode=='confirmed':
+        rig[3].settle_backend(rig[1],identity,Backend(),'real-adapter-task-reference',cancel=True)
+        assert rig[1].backend_execution['status']=='confirmed'
+    else:
+        with pytest.raises(VisionError) as caught:
+            rig[3].settle_backend(rig[1],identity,Backend(),'real-adapter-task-reference',cancel=True)
+        assert caught.value.code==9001 and not retryable(caught.value,'vlm')
+        assert rig[1].backend_execution['status']=='backend_execution_unconfirmed'
+
+
+def test_round2_unconfirmed_HTTP_never_retries_or_replaces(rig):
+    class Backend:
+        def task_reference(self, identity): return 'fake-task-1'
+        def settle(self, identity, task_ref, *, cancel): return None
+    with pytest.raises(VisionError, match='backend_execution_unconfirmed'):
+        rig[3].run(rig[1],rig[0],'ocr',lambda n: replace(spec('sleep'),
+            execution_scope='http_service', backend=Backend()),rig[-2])
+    assert sum(e['event']=='started' for e in rig[2])==1
+    assert rig[1].worker_state=='reaped'
+    assert rig[1].backend_execution['cancel_requested'] is True
+    assert rig[1].backend_execution['termination_confirmed'] is False
+    assert rig[4].read(rig[1].page_id) is None
+    with pytest.raises(VisionError, match='backend_execution_unconfirmed'):
+        rig[0].begin('replacement',rig[1].page_id,force=True)
+
+
+def test_round2_late_backend_callback_cannot_overwrite(rig):
+    old=rig[0].attempt(rig[1])
+    rig[0].attempt(rig[1])
+    with pytest.raises(VisionError, match='Late'):
+        rig[3].settle_backend(rig[1],old,None,'late-task',cancel=True)
+    assert rig[1].backend_execution is None
+
+
+@pytest.mark.skip(reason='BLOCKED: final Sidecar fields/version/path require M1/M2/M3 and owner sign-off')
+def test_round2_formal_sidecar_protocol_acceptance():
+    pass
+
+
+@pytest.mark.skip(reason='BLOCKED: no M2 HTTP per-request cancellation adapter/proof; no real model calls authorized')
+def test_round2_real_HTTP_backend_stopped():
+    pass
+
+
+def spec(mode='ok', *, code=2002, message='transient', transient=False, evidence=None, source='local-fixture'):
+    argv = [sys.executable, '-I', str(FAKE.resolve()), '--mode', mode, '--code', str(code), '--message', message]
+    if transient:
+        argv.append('--transient')
+    if evidence:
+        argv += ['--evidence', str(evidence)]
+    return WorkerSpec(tuple(argv), source)
+
+
+@pytest.fixture
+def rig(tmp_path):
+    fences = Fences()
+    record, _ = fences.begin('job-fixture', 'book01_p03')
+    events = []
+    supervisor = Supervisor(tmp_path/'work', deadline=.6, audit=events.append,
+                            cgroup_root=os.environ.get('M1_CGROUP_ROOT'))
+    store = AtomicStore(tmp_path/'assets', fences)
+    gate = Gate({'local-fixture'})
+    image = tmp_path/'image.png'
+    image.write_bytes(b'fake worker input, no decoder/model')
+    pipeline = VisionPipeline(supervisor, fences, gate, store)
+    return fences, record, events, supervisor, store, gate, image, pipeline
+
+
+def run_pipeline(rig, mode='ok', **kwargs):
+    return rig[-1].run(rig[1], rig[-2], (96, 128), lambda n: spec(mode),
+        downstream=kwargs.pop('downstream', lambda handoff: {'m3-test.json': b'{"mock":true}'}),
+        verify=kwargs.pop('verify', lambda docs: None), **kwargs)
+
+
+def assert_drained(rig):
+    events = rig[2]
+    starts = [x for x in events if x['event'] == 'started']
+    assert starts
+    assert len(starts) == len([x for x in events if x['event'] == 'reaped'])
+    assert all(x['active'] == 0 for x in events if x['event'] == 'reaped')
+    assert list(rig[3].root.iterdir()) == []
+
+
+def test_M1_S01_normal_return_reaped_and_clean(rig):
+    result = rig[3].run(rig[1], rig[0], 'ocr', lambda n: spec(), rig[-2])
+    assert unique_json(result.documents['c1'])['status'] == 'empty'
+    assert [x['event'] for x in rig[2]] == ['started', 'reaped', 'cleaned']
+    assert_drained(rig)
+
+
+def test_M1_S04_timeout_reap_cleanup_before_retry(rig):
+    with pytest.raises(VisionError) as caught:
+        rig[3].run(rig[1], rig[0], 'ocr', lambda n: spec('sleep'), rig[-2])
+    assert caught.value.code == 2002
+    events = rig[2]
+    assert [x['event'] for x in events] == ['started','reaped','cleaned','backoff','started','reaped','cleaned']
+    assert events[4]['monotonic']-events[3]['monotonic'] >= 1
+    assert events[0]['attempt_id'] != events[4]['attempt_id']
+    assert events[0]['fencing_token'] != events[4]['fencing_token']
+    assert_drained(rig)
+
+
+def test_M1_S05_first_error_second_success_exact_backoff(rig):
+    result = rig[3].run(rig[1], rig[0], 'ocr',
+        lambda n: spec('fail', transient=True) if n == 1 else spec(), rig[-2])
+    assert 'c1' in result.documents
+    events = rig[2]
+    assert sum(e['event'] == 'started' for e in events) == 2
+    backoff = next(e for e in events if e['event'] == 'backoff')
+    assert next(e for e in events[4:] if e['event'] == 'started')['monotonic']-backoff['monotonic'] >= 1
+    assert_drained(rig)
+
+
+def test_M1_S06_two_failures_terminal_error(rig):
+    with pytest.raises(VisionError) as caught:
+        rig[-1].run(rig[1], rig[-2], (96,128), lambda n: spec('fail', transient=True),
+                    downstream=lambda _: pytest.fail('must not enter M3'), verify=lambda _: None)
+    assert caught.value.code == 2002
+    assert rig[1].status == 'failed' and rig[1].error_code == 2002
+    assert sum(e['event']=='started' for e in rig[2]) == 2
+    assert_drained(rig)
+
+
+@pytest.mark.parametrize('mode', ['missing_safety','false_safety','string_safety','bad_safety','numeric_safety'])
+def test_M1_S07_S08_S09_safety_blocks_all_downstream(rig, mode):
+    calls = []
+    with pytest.raises(VisionError) as caught:
+        run_pipeline(rig, mode, downstream=lambda _: calls.extend(['story','tts','video']))
+    assert caught.value.code == 3004
+    assert rig[1].status == 'blocked' and rig[1].error_code == 3004
+    assert calls == [] and rig[4].read('book01_p03') is None
+    assert_drained(rig)
+
+
+def test_M1_S10_safety_true_snapshot_and_atomic_publish(rig):
+    calls = []
+    def m3(handoff):
+        assert unique_json(handoff.c2)['safety']['pass'] is True
+        assert handoff.identity == rig[1].identity
+        calls.extend(['story','tts','video'])
+        return {'m3-test.json':b'{"mock":true}'}
+    manifest = run_pipeline(rig, downstream=m3)
+    assert calls == ['story','tts','video'] and rig[1].status == 'done'
+    assert rig[4].read('book01_p03')[0] == manifest
+    assert manifest['c2_sha256'] == rig[1].c2_sha256
+    assert_drained(rig)
+
+
+def test_untrusted_safety_source_blocked(rig):
+    with pytest.raises(VisionError) as caught:
+        rig[-1].run(rig[1], rig[-2], (96,128), lambda n: spec(source='not-registered'),
+                    downstream=lambda _: pytest.fail('must not enter M3'), verify=lambda _: None)
+    assert caught.value.code == 3004 and rig[1].status == 'blocked'
+
+
+def test_M1_S11_old_generation_cannot_publish(rig):
+    run_pipeline(rig)
+    old = rig[1]
+    old_id = old.identity
+    new, _ = rig[0].begin('job-new','book01_p03', force=True)
+    with pytest.raises(Cancelled):
+        rig[4].publish(old, old_id, {'late.json':b'{}'}, verify=lambda _: None)
+    assert rig[0].pages['book01_p03'] is new
+    assert rig[4].read('book01_p03') is None
+
+
+def test_M1_S12_wrong_fencing_token_rejected(rig):
+    with pytest.raises(VisionError) as caught:
+        run_pipeline(rig, 'token_mismatch')
+    assert caught.value.code == 1002
+    assert rig[4].read('book01_p03') is None
+
+
+@pytest.mark.parametrize('mode', ['hash_mismatch','foreign_object','sidecar_traversal','old_refs'])
+def test_M1_S13_refs_binding_rejected(rig, mode):
+    with pytest.raises(VisionError) as caught:
+        run_pipeline(rig, mode, downstream=lambda _: pytest.fail('must not enter M3'))
+    assert caught.value.code == 1002
+    assert rig[4].read('book01_p03') is None
+
+
+def test_M1_S14_3004_never_retried(rig):
+    c1 = rig[3].run(rig[1], rig[0], 'ocr', lambda n: spec(), rig[-2])
+    rig[2].clear()
+    with pytest.raises(VisionError) as caught:
+        rig[3].run(rig[1], rig[0], 'vlm', lambda n: spec('fail', code=3004, transient=True), rig[-2], c1=c1)
+    assert caught.value.code == 3004
+    assert sum(e['event']=='started' for e in rig[2]) == 1
+
+
+def test_M1_S15_3001_empty_is_not_safety(rig):
+    snap = rig[3].run(rig[1], rig[0], 'ocr', lambda n: spec('empty_error'), rig[-2])
+    assert rig[5].c1(snap, 'book01_p03', (96,128)).status == 'empty'
+    assert snap.reported_code == 3001
+    assert sum(e['event']=='started' for e in rig[2])==1
+    assert rig[1].status == 'running' and rig[1].error_code is None
+    assert not retryable(VisionError(3001, 'no text', transient=True), 'ocr')
+
+
+def test_M1_S16_duplicate_active_page_reuses_lease(rig):
+    again, created = rig[0].begin('job-fixture','book01_p03')
+    assert again is rig[1] and not created
+    run_pipeline(rig)
+    # Public API explicitly creates a fresh generation after done.
+    replacement, created = rig[0].begin('job-new','book01_p03')
+    assert created and replacement.generation_id != again.generation_id
+
+
+def test_M1_S17_cancelled_worker_cannot_revive(rig):
+    launched = threading.Event()
+    old_audit = rig[3].audit
+    def audit(event):
+        old_audit(event)
+        if event['event'] == 'started':
+            launched.set()
+    rig[3].audit = audit
+    errors = []
+    def work():
+        try:
+            rig[3].run(rig[1],rig[0],'ocr',lambda n: spec('sleep'),rig[-2])
+        except BaseException as exc:
+            errors.append(exc)
+    thread = threading.Thread(target=work)
+    thread.start()
+    assert launched.wait(5)
+    rig[0].cancel(rig[1])
+    thread.join(10)
+    assert not thread.is_alive() and len(errors)==1 and isinstance(errors[0], Cancelled)
+    assert rig[1].status == 'cancelled' and rig[1].worker_state == 'reaped'
+    assert_drained(rig)
+
+
+def test_M1_S18_publish_failure_no_half_bundle(rig):
+    def fault(name):
+        raise OSError('injected publication failure')
+    with pytest.raises(OSError, match='injected'):
+        run_pipeline(rig, fault=fault)
+    assert rig[1].status == 'failed'
+    assert rig[4].read('book01_p03') is None
+    assert list((rig[4].root/'bundles').iterdir()) == []
+    assert list((rig[4].root/'pointers').iterdir()) == []
+
+
+@pytest.mark.parametrize('code,msg,transient,expected', [
+    (2001,'model unavailable',True,True),(2001,'SAFETY unknown',True,False),
+    (2002,'timeout',True,True),(2003,'busy',True,True),(2004,'unavailable',True,True),
+    (2002,'not transient',False,False),(1002,'input',True,False),(3001,'no text',True,False),
+    (3003,'story',True,False),(3004,'safety',True,False),(3006,'no audio',True,False),
+    (9001,'unexpected',True,False),(3007,'video',True,False),(3008,'audio',True,False)])
+def test_exact_vision_retry_whitelist(code,msg,transient,expected):
+    assert retryable(VisionError(code,msg,transient=transient),'ocr') is expected
+
+
+def test_duplicate_json_keys_rejected():
+    with pytest.raises(ValueError, match='Duplicate'):
+        unique_json(b'{"safety":{"pass":false,"pass":true}}')
+
+
+def test_linux_without_delegation_fails_before_execution(tmp_path):
+    # Validate policy on Windows too, without trying to execute an uncontained worker.
+    from orchestrator.services.vision_supervisor.tree import ContainmentError, LinuxTree
+    with pytest.raises(ContainmentError, match='delegated'):
+        LinuxTree([sys.executable, '-c', 'raise RuntimeError("must not run")'], tmp_path, {}, None, None)
+
+
+def test_force_replacement_starts_only_after_old_tree_cleanup(rig):
+    launched = threading.Event()
+    events = rig[2]
+    def audit(event):
+        events.append(event)
+        if event['event'] == 'started':
+            launched.set()
+    rig[3].audit = audit
+    errors = []
+    old = rig[1]
+    def run_old():
+        try:
+            rig[3].run(old,rig[0],'ocr',lambda n: spec('sleep'),rig[-2])
+        except Cancelled as exc:
+            errors.append(exc)
+    thread = threading.Thread(target=run_old)
+    thread.start()
+    assert launched.wait(5)
+    new, _ = rig[0].begin('replacement','book01_p03',force=True)
+    snap = rig[3].run(new,rig[0],'ocr',lambda n: spec(),rig[-2])
+    thread.join(5)
+    assert not thread.is_alive() and len(errors)==1
+    assert old.status=='cancelled' and snap.identity.generation_id==new.generation_id
+    assert [e['event'] for e in events] == ['started','reaped','cleaned','started','reaped','cleaned']
+    assert events[2]['monotonic'] <= events[3]['monotonic']
+
+
+def test_close_idempotent_shared_barrier_rejects_registration(rig):
+    launched = threading.Event()
+    rig[3].audit = lambda e: (rig[2].append(e), launched.set() if e['event']=='started' else None)
+    errors = []
+    def work():
+        try:
+            rig[3].run(rig[1],rig[0],'ocr',lambda n: spec('sleep'),rig[-2])
+        except Cancelled as exc:
+            errors.append(exc)
+    thread=threading.Thread(target=work)
+    thread.start()
+    assert launched.wait(5)
+    shutdowns=[threading.Thread(target=rig[3].close) for _ in range(3)]
+    for shutdown in shutdowns:
+        shutdown.start()
+    for shutdown in shutdowns:
+        shutdown.join(10)
+        assert not shutdown.is_alive()
+    thread.join(1)
+    assert not thread.is_alive() and len(errors)==1
+    assert_drained(rig)
+    rig[3].close()
+    with pytest.raises(VisionError,match='shutting down'):
+        rig[3].run(rig[1],rig[0],'ocr',lambda n: spec(),rig[-2])
+
+
+def test_cancel_in_backoff_never_starts_second_attempt(rig):
+    def audit(event):
+        rig[2].append(event)
+        if event['event']=='backoff':
+            rig[0].cancel(rig[1])
+    rig[3].audit=audit
+    with pytest.raises(Cancelled):
+        rig[3].run(rig[1],rig[0],'ocr',lambda n: spec('fail',transient=True),rig[-2])
+    assert sum(e['event']=='started' for e in rig[2])==1
+    assert_drained(rig)
+
+
+def test_gate_generation_mismatch_blocks_before_M3(rig):
+    c1=rig[3].run(rig[1],rig[0],'ocr',lambda n: spec(),rig[-2])
+    c2=rig[3].run(rig[1],rig[0],'vlm',lambda n: spec(),rig[-2],c1=c1)
+    forged=replace(c2,identity=replace(c2.identity,generation_id='foreign'))
+    with pytest.raises(VisionError) as caught:
+        rig[5].accept(rig[1],rig[0],c1,forged,(96,128))
+    assert caught.value.code==3004
+    with pytest.raises(TypeError):
+        c2.documents['c2']=b'changed'
+
+
+def test_publish_verifier_failure_has_no_effective_artifacts(rig):
+    def reject(_):
+        raise VisionError(3007,'Media failed real decoder verification')
+    with pytest.raises(VisionError) as caught:
+        run_pipeline(rig,verify=reject)
+    assert caught.value.code==3007
+    assert rig[4].read('book01_p03') is None
+    assert list((rig[4].root/'bundles').iterdir())==[]
+
+
+@pytest.mark.parametrize('name', ['../other.json','C:/other.json','sub\\other.json','/other.json'])
+def test_worker_artifact_path_escape_rejected(tmp_path,name):
+    from orchestrator.services.vision_supervisor.supervisor import confined_file
+    with pytest.raises(VisionError):
+        confined_file(tmp_path,name)
+
+
+def test_tree_drain_failure_quarantines_and_never_retries(rig,monkeypatch):
+    from orchestrator.services.vision_supervisor import supervisor as module
+    from orchestrator.services.vision_supervisor.tree import ContainmentError
+    import shutil
+    original=module.drain
+    def failed_drain(*args,**kwargs):
+        # Real termination is still performed, then the barrier is fault-injected.
+        original(*args,**kwargs)
+        raise ContainmentError('injected drain proof failure')
+    monkeypatch.setattr(module,'drain',failed_drain)
+    with pytest.raises(ContainmentError):
+        rig[3].run(rig[1],rig[0],'ocr',lambda n: spec('sleep'),rig[-2])
+    assert len(rig[3].quarantined)==1 and rig[1].worker_state=='quarantined'
+    identity,tree,work=rig[3].quarantined[0]
+    assert work.is_dir() and tree.process.poll() is not None
+    assert sum(e['event']=='started' for e in rig[2])==1
+    with pytest.raises(ContainmentError):
+        rig[3].close()
+    # Only this test-owned quarantine, after the actual OS drain above.
+    shutil.rmtree(work)
+
+
+def test_cancel_after_worker_result_before_publication_cannot_revive(rig):
+    def m3(_):
+        rig[0].cancel(rig[1])
+        return {'late.json':b'{"mock":true}'}
+    with pytest.raises(Cancelled):
+        run_pipeline(rig,downstream=m3)
+    assert rig[1].status=='cancelled' and rig[4].read('book01_p03') is None
+
+
+def test_publication_cannot_replace_gated_C2(rig):
+    run_pipeline(rig)
+    # Create another valid attempt and accept it, then tamper with the caller's
+    # proposed bytes. The store must compare with the safety-gated raw C2 hash.
+    record,_=rig[0].begin('new-job','book01_p03')
+    c1=rig[3].run(record,rig[0],'ocr',lambda n: spec(),rig[-2])
+    c2=rig[3].run(record,rig[0],'vlm',lambda n: spec(),rig[-2],c1=c1)
+    handoff=rig[5].accept(record,rig[0],c1,c2,(96,128))
+    with pytest.raises(VisionError,match='differs'):
+        rig[4].publish(record,record.identity,
+            {'json/book01_p03_ocr.json':handoff.c1,'json/book01_p03_vlm.json':b'{"safety":{"pass":false}}',
+             'json/book01_p03_refs.json':handoff.sidecar},
+            verify=lambda _: pytest.fail('must reject before verifier'))
+    assert rig[4].read('book01_p03') is None

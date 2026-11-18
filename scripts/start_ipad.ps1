@@ -1,0 +1,45 @@
+. (Join-Path $PSScriptRoot 'studio_common.ps1')
+Set-StudioEnvironment
+Push-Location $StudioRoot
+try {
+    $reuseExisting=$false
+    if (Test-Path .runtime/ipad-network.json) {
+        $existing=Get-Content .runtime/ipad-network.json -Raw | ConvertFrom-Json
+        # Offline is expected on first start. Windows PowerShell 5 treats native
+        # stderr as terminating under ErrorActionPreference=Stop, even redirected.
+        try {
+            & $AppPython scripts/ipad_control.py check 2>$null
+            if ($LASTEXITCODE -eq 0) { $reuseExisting=$true }
+        } catch { $reuseExisting=$false }
+    }
+    if (!$reuseExisting) {
+        & $AppPython scripts/ipad_network.py
+        if ($LASTEXITCODE -ne 0) { throw 'LAN/TLS configuration failed.' }
+    }
+    $network = Get-Content .runtime/ipad-network.json -Raw | ConvertFrom-Json
+    # Windows venv python.exe is a redirector; the server image is the base
+    # interpreter. Firewall application matching must use that actual image.
+    $FirewallPython = & $AppPython -c 'import sys;print(sys._base_executable)'
+    # Wi-Fi may be classified Public. Do not change that classification: limit
+    # this program's two ports to this exact private IP and LocalSubnet instead.
+    foreach($port in @(8766,8767)) {
+        $ruleName="Paperbook-iPad-$port"
+        if (!(Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue)) {
+            New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Action Allow -Protocol TCP -LocalPort $port -LocalAddress $network.ip -RemoteAddress LocalSubnet -Profile Any -Program $FirewallPython | Out-Null
+        } else {
+            Set-NetFirewallRule -DisplayName $ruleName -Enabled True -LocalAddress $network.ip -RemoteAddress LocalSubnet -Program $FirewallPython -Profile Any | Out-Null
+        }
+    }
+    Import-Certificate -FilePath $network.public_ca -CertStoreLocation Cert:\CurrentUser\Root | Out-Null
+    if ($reuseExisting) {
+        Write-Host "Backend already running; firewall program verified: $($existing.url)"
+        Write-Host 'If pairing code expired, generate a new one in Parent Center.'
+        Start-Process (Join-Path $RuntimeDir 'IPAD_ACCESS.html')
+        return
+    }
+    $proc=Start-Process -FilePath $AppPython -WorkingDirectory $StudioRoot -WindowStyle Hidden -PassThru -ArgumentList @('scripts/ipad_server.py') -RedirectStandardOutput .runtime/ipad.out.log -RedirectStandardError .runtime/ipad.err.log
+    @{pid=$proc.Id;executable=$AppPython;url=$network.url} | ConvertTo-Json | Set-Content .runtime/ipad-process.json -Encoding UTF8
+    Start-Process (Join-Path $RuntimeDir 'IPAD_ACCESS.html')
+    Write-Host "HTTPS backend starting: $($network.url)"
+    Write-Host 'First iPad use requires installing and explicitly trusting the displayed household CA.'
+} finally { Pop-Location }

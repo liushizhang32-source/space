@@ -4,6 +4,10 @@ import logging
 import os
 import shutil
 import tempfile
+import json
+import inspect
+from contextlib import nullcontext
+from urllib.parse import urlsplit
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,6 +22,7 @@ from orchestrator.vendor.member3_v116.agents.generation.config import Settings a
 from orchestrator.vendor.member3_v116.agents.generation.errors import AppError, VideoPublishError
 from orchestrator.vendor.member3_v116.agents.generation.media import MediaStatus, validate_audio, validate_video
 from orchestrator.vendor.member3_v116.agents.generation.pipeline import record_publish_recovery
+from orchestrator.vendor.member3_v116.agents.generation import pipeline as member3_pipeline
 from orchestrator.vendor.member3_v116.agents.generation.safety import ensure_story_safe
 from orchestrator.vendor.member3_v116.agents.generation.story.builder import build_page_story
 from orchestrator.vendor.member3_v116.agents.generation.tts.client import TTSClient
@@ -56,10 +61,14 @@ class DeferredTTS:
 
 
 class Member3Adapter:
-    def __init__(self, storage):
+    def __init__(self, storage, m1_session_factory=None,m1_publisher=None):
         self.storage = storage
         self.fixture_factory = fixed_visual
         self.client_factory = TTSClient
+        # Trusted in-process M1 owner supplies sessions. No HTTP token issuance.
+        self.m1_session_factory = m1_session_factory
+        self.factory_can_cancel=m1_session_factory is not None and 'cancelled' in inspect.signature(m1_session_factory).parameters
+        self.m1_publisher=m1_publisher
 
     def session(self, page_id, job_id):
         return Member3Session(self, page_id, job_id)
@@ -69,7 +78,14 @@ class Member3Session:
     def __init__(self, adapter, page_id, job_id):
         self.adapter = adapter
         self.storage = adapter.storage
+        config=self.storage.settings
+        if adapter.m1_session_factory is None and (config.deployment_env!='local' or config.asset_mode!='offline_mock'):
+            raise APIError(1005,'成员3需要M1授权会话；演示仅允许显式local offline_mock')
         self.page_id = page_id
+        self.job_id = job_id
+        self.m1 = None
+        self.receipt = None
+        self.cancelled = lambda: False
         self.preserve = False
         private = self.storage.root / '.member3'
         private.mkdir(parents=True, exist_ok=True)
@@ -80,7 +96,11 @@ class Member3Session:
             # Explicit construction never reads .env, LLM_*, TTS_HTTP_URL or credentials.
             self.settings = MemberSettings(data_dir=self.root, asset_base_url=config.asset_base_url,
                 ffmpeg_path=config.ffmpeg_path, ffprobe_path=config.ffprobe_path,
-                tts_engine='silent', safety_enabled=True, safety_blocklist=config.safety_blocklist,
+                video_font=config.video_font,
+                tts_engine=config.member3_tts_engine,tts_http_url=config.member3_tts_http_url,
+                tts_api_key=config.member3_tts_api_key,llm_base_url=config.member3_llm_base_url,
+                llm_model=config.member3_llm_model,llm_api_key=config.member3_llm_api_key,
+                safety_enabled=True, safety_blocklist=config.safety_blocklist,
                 max_retry=1, retry_backoff_sec=0, video_timeout_sec=60)
             self.settings.ensure_dirs()
             self.inputs = {}
@@ -117,6 +137,8 @@ class Member3Session:
             raise APIError(int(exc.code), exc.msg) from exc
 
     def _step(self, stage, age_level):
+        if self.adapter.m1_session_factory is not None:
+            return self._authorized_step(stage, age_level)
         if stage == 'ocr':
             with self.storage.lock:
                 self.page = self.storage.pages[self.page_id].copy()
@@ -171,31 +193,126 @@ class Member3Session:
             self.save_story()
             return Outcome('failed', 'no_audio', error) if error else Outcome()
         if stage == 'render':
-            self.check_story()
-            try:
-                result = compose_video(self.page_id, self.story, self.settings)
-                path = self.settings.videos_dir/f'{self.page_id}_video.mp4'
-                check = validate_video(path, self.settings, deep=True)
-                probe = check.probe
-                if check.status is not MediaStatus.OK or probe is None or not probe.has_audio:
-                    raise APIError(3007, '视频产物未通过解码验证')
-                if (probe.width, probe.height, probe.fps) != (self.settings.video_width,
-                        self.settings.video_height, self.settings.video_fps) or abs(
-                        probe.duration_ms/1000-result.doc['duration_sec']) > 0.2:
-                    raise APIError(3007, '视频产物元数据不一致')
-                self.video = result.doc
-                self.media_hashes[path.resolve()] = hashlib.sha256(path.read_bytes()).hexdigest()
-                return Outcome()
-            except (AppError, APIError) as exc:
-                if int(exc.code) == 3004:
-                    raise
-                if isinstance(exc, VideoPublishError):
-                    self.preserve = True
-                    record_publish_recovery(self.settings.replace(data_dir=self.storage.root), self.page_id, exc)
-                return Outcome('failed', 'no_video', {'code': int(exc.code), 'msg': exc.msg})
+            return self._render()
         raise ValueError(stage)
 
+    def _authorized_step(self, stage, age_level):
+        if stage == 'ocr':
+            with self.storage.lock:self.page=self.storage.pages[self.page_id].copy()
+            options=dict(page_id=self.page_id, job_id=self.job_id,request_id=f'{self.job_id}:{self.page_id}')
+            if self.adapter.factory_can_cancel:options['cancelled']=self.cancelled
+            self.m1 = self.adapter.m1_session_factory(**options)
+            inputs = self.m1.inputs()
+            source = self.settings.uploads_dir / Path(self.page['original']).name
+            if self.page.get('original_sha256') != hashlib.sha256(inputs['image.bin']).hexdigest():
+                raise APIError(1002, '授权原图与捕获页面不一致')
+            source.write_bytes(inputs['image.bin'])
+            return Outcome()
+        if stage == 'vlm':
+            self.m1.ensure_page(self.page_id)
+            return Outcome()
+        if stage == 'story':
+            inputs = self.m1.inputs()
+            result = member3_pipeline.run_page(
+                self.page_id, age_level, self.settings, make_video=False,
+                tts_client=self.adapter.client_factory(self.settings),
+                m1=self.m1, cancelled=self.cancelled)
+            self.receipt = result.to_dict()
+            if result.status in ('failed', 'blocked'):
+                raise APIError(result.error['code'], result.error['msg'])
+            raw = (self.settings.json_dir/f'{self.page_id}_story.json').read_bytes()
+            if hashlib.sha256(raw).hexdigest() != result.m1_result_sha256:
+                raise APIError(1002, '已提交故事完整性校验失败')
+            self.story = json.loads(raw)
+            self.check_story()
+            self.media_hashes[(self.settings.json_dir/f'{self.page_id}_story.json').resolve()] = result.m1_result_sha256
+            for kind in ('ocr', 'vlm'):
+                data = inputs['c1.json' if kind == 'ocr' else 'c2.json']
+                (self.settings.json_dir/f'{self.page_id}_{kind}.json').write_bytes(data)
+            return Outcome(degraded=next(iter(result.degraded), None))
+        if stage == 'tts':
+            # B already synthesized TTS before submitting Story. Validation only.
+            self.check_story()
+            for segment in self.story['segments']:
+                url = segment.get('audio_url')
+                if not url:
+                    continue
+                name = Path(urlsplit(url).path).name
+                if url != self.settings.asset_base_url.rstrip('/')+'/audios/'+name:
+                    raise APIError(3008, '音频产物 URL 非法')
+                path = (self.settings.audios_dir/name).resolve()
+                if not path.is_relative_to(self.settings.audios_dir.resolve()):
+                    raise APIError(3008, '音频产物路径非法')
+                check = validate_audio(path, self.settings, deep=True)
+                if check.status is not MediaStatus.OK or check.probe is None:
+                    raise APIError(3008, '音频产物未通过解码验证')
+                if abs(check.probe.duration_ms/1000-segment['duration_sec']) > .2:
+                    raise APIError(3008, '已提交音频时长与产物不一致')
+                self.audio_paths.add(path)
+                self.media_hashes[path] = hashlib.sha256(path.read_bytes()).hexdigest()
+            return Outcome(degraded='no_audio' if 'no_audio' in self.receipt['degraded'] else None)
+        if stage == 'render':
+            return self._render()
+        raise ValueError(stage)
+
+    def _render(self):
+        self.check_story()
+        try:
+            result = compose_video(self.page_id, self.story, self.settings)
+            path = self.settings.videos_dir/f'{self.page_id}_video.mp4'
+            check = validate_video(path, self.settings, deep=True)
+            probe = check.probe
+            if check.status is not MediaStatus.OK or probe is None or not probe.has_audio:
+                raise APIError(3007, '视频产物未通过解码验证')
+            if (probe.width, probe.height, probe.fps) != (self.settings.video_width,
+                    self.settings.video_height, self.settings.video_fps) or abs(
+                    probe.duration_ms/1000-result.doc['duration_sec']) > 0.2:
+                raise APIError(3007, '视频产物元数据不一致')
+            self.video = result.doc
+            self.media_hashes[path.resolve()] = hashlib.sha256(path.read_bytes()).hexdigest()
+            return Outcome()
+        except (AppError, APIError) as exc:
+            if int(exc.code) == 3004:
+                raise
+            if isinstance(exc, VideoPublishError):
+                self.preserve = True
+                record_publish_recovery(self.settings.replace(data_dir=self.storage.root), self.page_id, exc)
+            return Outcome('failed', 'no_video', {'code': int(exc.code), 'msg': exc.msg})
+
+    def finalize_m1(self, status, error=None):
+        """Called after the real worker drains, including cancellation/force paths."""
+        if self.m1 is None:
+            return None
+        release_error = member3_pipeline._release_on_failure(self.m1)
+        receipt = dict(self.receipt or {})
+        receipt.update(generation_mode='m1_authorized', status=status,
+                       m1_attempt_id=self.m1.attempt_id,
+                       request_id=self.m1.attempt.request_id,
+                       m1_result_sha256=self.m1.attempt.result_sha256)
+        if error:
+            receipt['error'] = error
+        if release_error:
+            receipt['budget_release_error'] = release_error
+        receipt.setdefault('budget_release_error', None)
+        receipt.setdefault('error', None)
+        receipt['submission_state'] = ('UNKNOWN' if self.m1.submission_started else
+                                       'RELEASED' if self.m1.released else 'RESERVED')
+        self.receipt = receipt
+        return receipt
+
     def publish(self):
+        if self.m1 is None:
+            return self._publish()
+        from orchestrator.services.offline_protocols.publication import generation_publication
+        from orchestrator.services.integration_reference.authority import Denied
+        from orchestrator.services.vision_supervisor.supervisor import Cancelled
+        try:
+            with generation_publication(self.m1):urls=self._publish()
+            return self.adapter.m1_publisher(self) if self.adapter.m1_publisher is not None else urls
+        except (Denied,Cancelled) as exc:
+            raise APIError(1005,'M1拒绝已撤销或失效的最终发布') from exc
+
+    def _publish(self):
         """Called on the event loop only after worker success/cancellation checks.
 
         Atomic per file; URLs are exposed only after every selected file is copied.

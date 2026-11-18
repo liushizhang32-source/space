@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import threading
+import json
 from concurrent.futures import ThreadPoolExecutor
 from time import perf_counter
 
@@ -13,9 +14,26 @@ logger = logging.getLogger(__name__)
 
 
 class Member3Jobs(Jobs):
-    def __init__(self, storage):
+    def __init__(self, storage, m1_session_factory=None,m1_publisher=None):
         super().__init__(storage)
-        self.adapter = Member3Adapter(storage)
+        self.adapter = Member3Adapter(storage, m1_session_factory=m1_session_factory,m1_publisher=m1_publisher)
+        if self.settings.persist_state:
+            from orchestrator.api.models import JobData
+            for key,raw in storage.read_state('jobs').items():
+                job=JobData.model_validate(raw)
+                if key!=job.job_id:raise ValueError('Job checkpoint identity mismatch')
+                if job.status in {'queued','running'}:
+                    job.status='cancelled';job.updated_at=now()
+                    job.error={'code':2004,'msg':'服务重启中断；M1预算按权威状态保留，未自动重试'}
+                    for page in job.pages:
+                        if page.status in {'pending','processing'}:
+                            page.status='failed';page.error=job.error.copy()
+                            for stage in page.stages:
+                                if stage.status=='running':stage.status='failed'
+                                elif stage.status=='pending':stage.status='skipped'
+                self.jobs[key]=job
+        self.m1_receipts = {}
+        self.m1_reconciliation = {}
         self._executor = ThreadPoolExecutor(max_workers=self.settings.max_concurrent_jobs,
                                             thread_name_prefix='member3')
         self._workers = set()
@@ -28,7 +46,10 @@ class Member3Jobs(Jobs):
     def create(self, request):
         if self._shutting_down:
             raise APIError(2004, '生成服务正在关闭')
-        return super().create(request)
+        result=super().create(request);self.checkpoint();return result
+
+    def checkpoint(self):
+        if self.settings.persist_state:self.storage.write_state('jobs',{key:job.model_dump(mode='json') for key,job in self.jobs.items()})
 
     async def work(self, fn, *args):
         if self._shutting_down:
@@ -101,6 +122,7 @@ class Member3Jobs(Jobs):
             *(asyncio.wrap_future(f) for f in self._workers), return_exceptions=True)
         await asyncio.shield(self._worker_drain)
         self._executor.shutdown(wait=True)
+        self.checkpoint()
 
     @staticmethod
     def progress(job):
@@ -117,6 +139,7 @@ class Member3Jobs(Jobs):
             raise
         finally:
             self._cancel_flags.pop(asyncio.current_task(), None)
+            self.checkpoint()
 
     async def _run(self, job, age_level):
         await asyncio.sleep(self.settings.queue_delay)
@@ -127,6 +150,8 @@ class Member3Jobs(Jobs):
             started = perf_counter()
             try:
                 session = self.adapter.session(page.page_id, job.job_id)
+                flag = self._cancel_flags.setdefault(asyncio.current_task(), threading.Event())
+                session.cancelled = flag.is_set
                 for stage in page.stages:
                     stage.status = 'running'
                     job.current_stage = stage.name
@@ -174,6 +199,22 @@ class Member3Jobs(Jobs):
             finally:
                 if session is not None:
                     try:
+                        receipt = (session.finalize_m1(
+                            'cancelled' if flag.is_set() else page.status, page.error)
+                            if getattr(session, 'm1', None) is not None else None)
+                        if receipt is not None:
+                            key = (job.job_id, page.page_id)
+                            self.m1_receipts[key] = receipt
+                            if receipt['budget_release_error'] or receipt['submission_state'] == 'UNKNOWN':
+                                self.m1_reconciliation[key] = receipt.copy()
+                            logger.info('M1 internal receipt: %s', json.dumps(receipt, ensure_ascii=False))
+                            audit = self.storage.root / '.member3' / 'm1-reconciliation.jsonl'
+                            try:
+                                with audit.open('a', encoding='utf-8') as handle:
+                                    handle.write(json.dumps({**receipt, 'job_id': job.job_id,
+                                                             'page_id': page.page_id}, ensure_ascii=False)+'\n')
+                            except OSError:
+                                logger.exception('M1 audit persistence failed; receipt retained for reconciliation')
                         # No worker can still access this session: work drains the
                         # same real Future even across repeated cancellation. Do
                         # not register a new executor job during shutdown cleanup.

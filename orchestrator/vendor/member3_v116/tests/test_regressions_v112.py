@@ -10,13 +10,13 @@ from pathlib import Path
 
 import pytest
 
-from agents.generation.config import Settings
-from agents.generation.errors import AppError, ErrorCode, TTSFailed, VideoError
-from agents.generation.media import MediaCheck, MediaStatus, probe_audio
-from agents.generation.story.builder import build_page_story
-from agents.generation.tts.client import TTSClient
-from agents.generation.tts.engine import HttpEngine
-from agents.generation.video import compose_video
+from orchestrator.vendor.member3_v116.agents.generation.config import Settings
+from orchestrator.vendor.member3_v116.agents.generation.errors import AppError, ErrorCode, TTSFailed, VideoError
+from orchestrator.vendor.member3_v116.agents.generation.media import MediaCheck, MediaStatus, probe_audio
+from orchestrator.vendor.member3_v116.agents.generation.story.builder import build_page_story
+from orchestrator.vendor.member3_v116.agents.generation.tts.client import TTSClient
+from orchestrator.vendor.member3_v116.agents.generation.tts.engine import HttpEngine
+from orchestrator.vendor.member3_v116.agents.generation.video import compose_video
 
 
 def _story(settings: Settings, ocr: dict, vlm: dict) -> dict:
@@ -125,7 +125,7 @@ def test_cache_with_wrong_container_is_rebuilt(media_settings: Settings):
 # ---------- 发布顺序：先验证，后发布 ----------
 
 def test_silent_tts_validates_before_publish(media_settings: Settings, monkeypatch):
-    from agents.generation.tts import engine as engine_module
+    from orchestrator.vendor.member3_v116.agents.generation.tts import engine as engine_module
 
     monkeypatch.setattr(
         engine_module,
@@ -138,7 +138,7 @@ def test_silent_tts_validates_before_publish(media_settings: Settings, monkeypat
     with pytest.raises(TTSFailed):
         client.synthesize(text)
 
-    from agents.generation.ids import tts_cache_key
+    from orchestrator.vendor.member3_v116.agents.generation.ids import tts_cache_key
 
     target = media_settings.audios_dir / f"tts_{tts_cache_key(text, 'female_warm', 1.0)}.mp3"
     assert not target.exists(), "验证失败不能留下正式文件"
@@ -148,7 +148,7 @@ def test_silent_tts_validates_before_publish(media_settings: Settings, monkeypat
 def test_video_validates_before_publish(
     media_settings: Settings, page_image, sample_ocr: dict, sample_vlm: dict, monkeypatch
 ):
-    from agents.generation import video as video_module
+    from orchestrator.vendor.member3_v116.agents.generation import video as video_module
 
     story = _story(media_settings, sample_ocr, sample_vlm)
     monkeypatch.setattr(
@@ -170,7 +170,7 @@ def test_video_validates_before_publish(
 def test_http_failure_keeps_existing_valid_audio(media_settings: Settings, monkeypatch):
     settings = media_settings.replace(tts_engine="http", tts_http_url="http://fake.invalid/tts")
     text = "旧文件保护测试。"
-    from agents.generation.ids import tts_cache_key
+    from orchestrator.vendor.member3_v116.agents.generation.ids import tts_cache_key
 
     target = settings.audios_dir / f"tts_{tts_cache_key(text, 'female_warm', 1.0)}.mp3"
     good = TTSClient(media_settings).synthesize("旧文件保护素材。").audio_path.read_bytes()

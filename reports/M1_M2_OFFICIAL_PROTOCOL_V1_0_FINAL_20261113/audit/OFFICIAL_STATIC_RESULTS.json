@@ -1,0 +1,565 @@
+{
+  "scope": "static official protocol cases; ledger examples use only in-memory serialized reference state, NOT M1 persistence or real concurrency/crash execution",
+  "passed": 93,
+  "failed": 0,
+  "results": [
+    {
+      "name": "official final ordered messages exact canonical bytes",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "prompt hash reproducible",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "canonical JSON has no BOM or added formatting whitespace",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "input key insertion order cannot change canonical role/content order",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "message order changes hash",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "role participates in hash",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "final content replacement participates in hash",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "trimming changes hash and is forbidden",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "invalid Unicode rejected",
+      "pass": true,
+      "expected": "reject",
+      "detail": "UnicodeEncodeError: 'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed"
+    },
+    {
+      "name": "unknown message key rejected",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: "
+    },
+    {
+      "name": "NaN message rejected",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: "
+    },
+    {
+      "name": "non-text multimodal content unsupported",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: "
+    },
+    {
+      "name": "empty message list rejected",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: "
+    },
+    {
+      "name": "attachment raw hash and ordered-message association",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "Sidecar final message hash Clothing observed",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "Sidecar final message hash Clothing unobserved",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "Sidecar final message hash Appearance empty",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "Sidecar final message hash Confidence unavailable",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "Sidecar final message hash Confidence model_estimate",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "Sidecar final message hash Uncalibrated estimate pending independent M5 evidence",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "Sidecar final message hash Empty observations",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "no accepted calibrated=true fixture before M5 registry",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "model assertion calibrated=true alone rejected",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: "
+    },
+    {
+      "name": "toy calibration cannot bypass incomplete M5 registry",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: "
+    },
+    {
+      "name": "official OCR/VLM Schema views equal internal validator contracts",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "official WORKER_RESULT_SCHEMA.json equals validated structural contract",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "official SIDECAR_SCHEMA.json equals validated structural contract",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "reference initial Attempt1 reserved before dispatch",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "reference exactly one legitimate retry",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "reference third attempt rejected",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: stage maximum two total attempts"
+    },
+    {
+      "name": "reference supervisor restart serialization preserves count",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "reference third rejected after serialized restart",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: stage maximum two total attempts"
+    },
+    {
+      "name": "reference reserved process crash consumes attempt and blocks blind retry",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: unresolved predecessor"
+    },
+    {
+      "name": "reference duplicate entry cannot reset maximum",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: stage maximum two total attempts"
+    },
+    {
+      "name": "reference stale concurrent reservation version rejected",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: stale concurrent reservation"
+    },
+    {
+      "name": "reference same attempt id rejected",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: "
+    },
+    {
+      "name": "reference same fencing token rejected",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: "
+    },
+    {
+      "name": "reference unknown retains consumed attempt and rejects resubmit",
+      "pass": true,
+      "expected": "reject",
+      "detail": "AssertionError: unresolved predecessor"
+    },
+    {
+      "name": "reference OCR and VLM counted separately",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "formal retry timeout after termination",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "formal retry timeout before termination",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "formal retry typed cancellation",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "formal retry transient 2004 without exact identifier",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "formal retry invented 2004 identifier",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "formal retry 9001",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "formal retry 3004",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "formal retry 3001 OCR special nonretry",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "formal retry second total attempt exhausted",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "formal retry cancelled fences",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "formal retry safety 2001",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches IDENTITY",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches REQUEST",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches RETRY",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches RETRY_PREDICATE",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches CANCEL",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches FENCES",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches BOUND_C1",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches GATE",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches SIDECAR",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches PATH",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches JSON",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches SPEC",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches LIMIT",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches PIPELINE",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches PUBLISH",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches LEASE_ENTRY",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches LEASE_RUN",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches JOB_STATE",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches RUNNER",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches UNKNOWN",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches LOOKUP",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches LEASE_TEST",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches FIXTURE_ARGV",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches FIXTURE",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches PUBLIC_OCR",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches PUBLIC_VLM",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches API_OVERVIEW",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches API_RETRY",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches M2_ENTRY",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches M2_PROMPT",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches M2_C1_PATH",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches M2_BINDING",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches M2_REQUEST",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches M2_REFS",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches M2_FACTORY",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches M2_RENDER",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches M2_HISTORY",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches M2_ENVELOPE",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches M2_IDENTITY",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches M2_OUTPUTS",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches M2_FINISH",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "source range regenerated and hash matches APPROVAL",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    },
+    {
+      "name": "Profile B exact pairing and A remains independently blocked",
+      "pass": true,
+      "expected": "accept",
+      "detail": "accepted"
+    }
+  ]
+}

@@ -1,0 +1,2967 @@
+diff --git a/orchestrator/main.py b/orchestrator/main.py
+index ee9c8c4..836d37e 100644
+--- a/orchestrator/main.py
++++ b/orchestrator/main.py
+@@ -15,7 +15,7 @@ from orchestrator.services.jobs import Jobs
+ from orchestrator.services.storage import Storage
+ 
+ 
+-def create_app(settings: Settings | None = None) -> FastAPI:
++def create_app(settings: Settings | None = None, *, m1_session_factory=None) -> FastAPI:
+     settings = settings or Settings()
+     storage = Storage(settings)
+     if settings.generation_backend == 'member3':
+@@ -26,7 +26,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
+ 
+     @asynccontextmanager
+     async def lifespan(app):
+-        app.state.jobs = jobs_class(storage)
++        app.state.jobs = (jobs_class(storage, m1_session_factory=m1_session_factory)
++                          if m1_session_factory is not None and settings.generation_backend == 'member3'
++                          else jobs_class(storage))
+         yield
+         await app.state.jobs.close()
+ 
+diff --git a/orchestrator/services/member3_adapter.py b/orchestrator/services/member3_adapter.py
+index cb184a0..e561ab1 100644
+--- a/orchestrator/services/member3_adapter.py
++++ b/orchestrator/services/member3_adapter.py
+@@ -4,6 +4,8 @@ import logging
+ import os
+ import shutil
+ import tempfile
++import json
++from urllib.parse import urlsplit
+ from dataclasses import dataclass
+ from pathlib import Path
+ from types import SimpleNamespace
+@@ -18,6 +20,7 @@ from orchestrator.vendor.member3_v116.agents.generation.config import Settings a
+ from orchestrator.vendor.member3_v116.agents.generation.errors import AppError, VideoPublishError
+ from orchestrator.vendor.member3_v116.agents.generation.media import MediaStatus, validate_audio, validate_video
+ from orchestrator.vendor.member3_v116.agents.generation.pipeline import record_publish_recovery
++from orchestrator.vendor.member3_v116.agents.generation import pipeline as member3_pipeline
+ from orchestrator.vendor.member3_v116.agents.generation.safety import ensure_story_safe
+ from orchestrator.vendor.member3_v116.agents.generation.story.builder import build_page_story
+ from orchestrator.vendor.member3_v116.agents.generation.tts.client import TTSClient
+@@ -56,10 +59,12 @@ class DeferredTTS:
+ 
+ 
+ class Member3Adapter:
+-    def __init__(self, storage):
++    def __init__(self, storage, m1_session_factory=None):
+         self.storage = storage
+         self.fixture_factory = fixed_visual
+         self.client_factory = TTSClient
++        # Trusted in-process M1 owner supplies sessions. No HTTP token issuance.
++        self.m1_session_factory = m1_session_factory
+ 
+     def session(self, page_id, job_id):
+         return Member3Session(self, page_id, job_id)
+@@ -70,6 +75,10 @@ class Member3Session:
+         self.adapter = adapter
+         self.storage = adapter.storage
+         self.page_id = page_id
++        self.job_id = job_id
++        self.m1 = None
++        self.receipt = None
++        self.cancelled = lambda: False
+         self.preserve = False
+         private = self.storage.root / '.member3'
+         private.mkdir(parents=True, exist_ok=True)
+@@ -124,6 +133,8 @@ class Member3Session:
+                 if not source.is_file():
+                     raise APIError(1003, '原始图片不存在')
+                 shutil.copy2(source, self.settings.uploads_dir/source.name)
++        if self.adapter.m1_session_factory is not None:
++            return self._authorized_step(stage, age_level)
+         if stage in ('ocr', 'vlm'):
+             cls = OCRData if stage == 'ocr' else VLMData
+             model = cls.model_validate(self.adapter.fixture_factory(stage, self.page))
+@@ -171,30 +182,108 @@ class Member3Session:
+             self.save_story()
+             return Outcome('failed', 'no_audio', error) if error else Outcome()
+         if stage == 'render':
++            return self._render()
++        raise ValueError(stage)
++
++    def _authorized_step(self, stage, age_level):
++        if stage in ('ocr', 'vlm'):
++            # M1 owns these inputs; do not run fixture vision in authorized mode.
++            return Outcome()
++        if stage == 'story':
++            self.m1 = self.adapter.m1_session_factory(
++                page_id=self.page_id, job_id=self.job_id,
++                request_id=f'{self.job_id}:{self.page_id}')
++            inputs = self.m1.inputs()
++            source = self.settings.uploads_dir / Path(self.page['original']).name
++            if hashlib.sha256(source.read_bytes()).digest() != hashlib.sha256(inputs['image.bin']).digest():
++                raise APIError(1002, '授权原图与捕获页面不一致')
++            result = member3_pipeline.run_page(
++                self.page_id, age_level, self.settings, make_video=False,
++                tts_client=self.adapter.client_factory(self.settings),
++                m1=self.m1, cancelled=self.cancelled)
++            self.receipt = result.to_dict()
++            if result.status in ('failed', 'blocked'):
++                raise APIError(result.error['code'], result.error['msg'])
++            raw = (self.settings.json_dir/f'{self.page_id}_story.json').read_bytes()
++            if hashlib.sha256(raw).hexdigest() != result.m1_result_sha256:
++                raise APIError(1002, '已提交故事完整性校验失败')
++            self.story = json.loads(raw)
+             self.check_story()
+-            try:
+-                result = compose_video(self.page_id, self.story, self.settings)
+-                path = self.settings.videos_dir/f'{self.page_id}_video.mp4'
+-                check = validate_video(path, self.settings, deep=True)
+-                probe = check.probe
+-                if check.status is not MediaStatus.OK or probe is None or not probe.has_audio:
+-                    raise APIError(3007, '视频产物未通过解码验证')
+-                if (probe.width, probe.height, probe.fps) != (self.settings.video_width,
+-                        self.settings.video_height, self.settings.video_fps) or abs(
+-                        probe.duration_ms/1000-result.doc['duration_sec']) > 0.2:
+-                    raise APIError(3007, '视频产物元数据不一致')
+-                self.video = result.doc
+-                self.media_hashes[path.resolve()] = hashlib.sha256(path.read_bytes()).hexdigest()
+-                return Outcome()
+-            except (AppError, APIError) as exc:
+-                if int(exc.code) == 3004:
+-                    raise
+-                if isinstance(exc, VideoPublishError):
+-                    self.preserve = True
+-                    record_publish_recovery(self.settings.replace(data_dir=self.storage.root), self.page_id, exc)
+-                return Outcome('failed', 'no_video', {'code': int(exc.code), 'msg': exc.msg})
++            self.media_hashes[(self.settings.json_dir/f'{self.page_id}_story.json').resolve()] = result.m1_result_sha256
++            for kind in ('ocr', 'vlm'):
++                data = inputs['c1.json' if kind == 'ocr' else 'c2.json']
++                (self.settings.json_dir/f'{self.page_id}_{kind}.json').write_bytes(data)
++            return Outcome(degraded=next(iter(result.degraded), None))
++        if stage == 'tts':
++            # B already synthesized TTS before submitting Story. Validation only.
++            self.check_story()
++            for segment in self.story['segments']:
++                url = segment.get('audio_url')
++                if not url:
++                    continue
++                name = Path(urlsplit(url).path).name
++                if url != self.settings.asset_base_url.rstrip('/')+'/audios/'+name:
++                    raise APIError(3008, '音频产物 URL 非法')
++                path = (self.settings.audios_dir/name).resolve()
++                if not path.is_relative_to(self.settings.audios_dir.resolve()):
++                    raise APIError(3008, '音频产物路径非法')
++                check = validate_audio(path, self.settings, deep=True)
++                if check.status is not MediaStatus.OK or check.probe is None:
++                    raise APIError(3008, '音频产物未通过解码验证')
++                if abs(check.probe.duration_ms/1000-segment['duration_sec']) > .2:
++                    raise APIError(3008, '已提交音频时长与产物不一致')
++                self.audio_paths.add(path)
++                self.media_hashes[path] = hashlib.sha256(path.read_bytes()).hexdigest()
++            return Outcome(degraded='no_audio' if 'no_audio' in self.receipt['degraded'] else None)
++        if stage == 'render':
++            return self._render()
+         raise ValueError(stage)
+ 
++    def _render(self):
++        self.check_story()
++        try:
++            result = compose_video(self.page_id, self.story, self.settings)
++            path = self.settings.videos_dir/f'{self.page_id}_video.mp4'
++            check = validate_video(path, self.settings, deep=True)
++            probe = check.probe
++            if check.status is not MediaStatus.OK or probe is None or not probe.has_audio:
++                raise APIError(3007, '视频产物未通过解码验证')
++            if (probe.width, probe.height, probe.fps) != (self.settings.video_width,
++                    self.settings.video_height, self.settings.video_fps) or abs(
++                    probe.duration_ms/1000-result.doc['duration_sec']) > 0.2:
++                raise APIError(3007, '视频产物元数据不一致')
++            self.video = result.doc
++            self.media_hashes[path.resolve()] = hashlib.sha256(path.read_bytes()).hexdigest()
++            return Outcome()
++        except (AppError, APIError) as exc:
++            if int(exc.code) == 3004:
++                raise
++            if isinstance(exc, VideoPublishError):
++                self.preserve = True
++                record_publish_recovery(self.settings.replace(data_dir=self.storage.root), self.page_id, exc)
++            return Outcome('failed', 'no_video', {'code': int(exc.code), 'msg': exc.msg})
++
++    def finalize_m1(self, status, error=None):
++        """Called after the real worker drains, including cancellation/force paths."""
++        if self.m1 is None:
++            return None
++        release_error = member3_pipeline._release_on_failure(self.m1)
++        receipt = dict(self.receipt or {})
++        receipt.update(generation_mode='m1_authorized', status=status,
++                       m1_attempt_id=self.m1.attempt_id,
++                       request_id=self.m1.attempt.request_id,
++                       m1_result_sha256=self.m1.attempt.result_sha256)
++        if error:
++            receipt['error'] = error
++        if release_error:
++            receipt['budget_release_error'] = release_error
++        receipt.setdefault('budget_release_error', None)
++        receipt.setdefault('error', None)
++        receipt['submission_state'] = ('UNKNOWN' if self.m1.submission_started else
++                                       'RELEASED' if self.m1.released else 'RESERVED')
++        self.receipt = receipt
++        return receipt
++
+     def publish(self):
+         """Called on the event loop only after worker success/cancellation checks.
+ 
+diff --git a/orchestrator/services/member3_jobs.py b/orchestrator/services/member3_jobs.py
+index b274926..354b176 100644
+--- a/orchestrator/services/member3_jobs.py
++++ b/orchestrator/services/member3_jobs.py
+@@ -2,6 +2,7 @@
+ import asyncio
+ import logging
+ import threading
++import json
+ from concurrent.futures import ThreadPoolExecutor
+ from time import perf_counter
+ 
+@@ -13,9 +14,11 @@ logger = logging.getLogger(__name__)
+ 
+ 
+ class Member3Jobs(Jobs):
+-    def __init__(self, storage):
++    def __init__(self, storage, m1_session_factory=None):
+         super().__init__(storage)
+-        self.adapter = Member3Adapter(storage)
++        self.adapter = Member3Adapter(storage, m1_session_factory=m1_session_factory)
++        self.m1_receipts = {}
++        self.m1_reconciliation = {}
+         self._executor = ThreadPoolExecutor(max_workers=self.settings.max_concurrent_jobs,
+                                             thread_name_prefix='member3')
+         self._workers = set()
+@@ -127,6 +130,8 @@ class Member3Jobs(Jobs):
+             started = perf_counter()
+             try:
+                 session = self.adapter.session(page.page_id, job.job_id)
++                flag = self._cancel_flags.setdefault(asyncio.current_task(), threading.Event())
++                session.cancelled = flag.is_set
+                 for stage in page.stages:
+                     stage.status = 'running'
+                     job.current_stage = stage.name
+@@ -174,6 +179,22 @@ class Member3Jobs(Jobs):
+             finally:
+                 if session is not None:
+                     try:
++                        receipt = (session.finalize_m1(
++                            'cancelled' if flag.is_set() else page.status, page.error)
++                            if getattr(session, 'm1', None) is not None else None)
++                        if receipt is not None:
++                            key = (job.job_id, page.page_id)
++                            self.m1_receipts[key] = receipt
++                            if receipt['budget_release_error'] or receipt['submission_state'] == 'UNKNOWN':
++                                self.m1_reconciliation[key] = receipt.copy()
++                            logger.info('M1 internal receipt: %s', json.dumps(receipt, ensure_ascii=False))
++                            audit = self.storage.root / '.member3' / 'm1-reconciliation.jsonl'
++                            try:
++                                with audit.open('a', encoding='utf-8') as handle:
++                                    handle.write(json.dumps({**receipt, 'job_id': job.job_id,
++                                                             'page_id': page.page_id}, ensure_ascii=False)+'\n')
++                            except OSError:
++                                logger.exception('M1 audit persistence failed; receipt retained for reconciliation')
+                         # No worker can still access this session: work drains the
+                         # same real Future even across repeated cancellation. Do
+                         # not register a new executor job during shutdown cleanup.
+diff --git a/orchestrator/tests/test_member3_m1_callchain.py b/orchestrator/tests/test_member3_m1_callchain.py
+new file mode 100644
+index 0000000..31dc6bc
+--- /dev/null
++++ b/orchestrator/tests/test_member3_m1_callchain.py
+@@ -0,0 +1,269 @@
++"""CI_ONLY: real HTTP Jobs chain with the hash-locked M1 V0.8.1 offline kit."""
++import hashlib
++import io
++import json
++import os
++import threading
++import time
++
++import pytest
++from fastapi.testclient import TestClient
++from PIL import Image
++
++from orchestrator.core.config import Settings
++from orchestrator.main import create_app
++from orchestrator.services import member3_adapter as adapter
++from orchestrator.vendor.member3_v116.agents.generation import pipeline
++from orchestrator.vendor.member3_v116.agents.generation.errors import AppError, ErrorCode, StoryInputError
++from orchestrator.vendor.member3_v116.agents.generation.m1_generation import GenerationDenied
++from orchestrator.vendor.member3_v116.agents.generation.m1_pipeline import open_session
++from orchestrator.vendor.member3_v116.tests import m1_offline_rig as fixtures
++
++
++@pytest.fixture
++def chain(tmp_path, monkeypatch):
++    image = io.BytesIO()
++    Image.new('RGB', (96, 128), 'white').save(image, format='PNG')
++    monkeypatch.setattr(fixtures, 'IMAGE', image.getvalue())
++    rig = fixtures.make_rig(tmp_path/'m1')
++    sessions = []
++
++    def factory(*, page_id, job_id, request_id):
++        node = rig.page(3)
++        consumer = rig.consumer_for(3)
++        session = open_session(consumer, page_id=page_id, request_id=request_id,
++            amount=1000, c1=node.c1, c2=node.c2, size=(96, 128), image=rig.image,
++            final_messages=[{'role': 'user', 'content': '为这一页生成儿童故事'}])
++        sessions.append(session)
++        return session
++
++    app = create_app(Settings(data_dir=tmp_path/'data', generation_backend='member3',
++        asset_base_url='http://testserver', queue_delay=.001, stage_delay=.001,
++        ffmpeg_path=os.environ['FFMPEG_PATH'], ffprobe_path=os.environ['FFPROBE_PATH']),
++        m1_session_factory=factory)
++    with TestClient(app) as client:
++        response = client.post('/api/v1/capture', data={'book_id':'book01','page_no':3},
++            files={'image':('page.png',rig.image,'image/png')})
++        assert response.json()['code'] == 0
++        yield client, app.state.jobs, rig, sessions
++
++
++def start(client, force=False):
++    doc = client.post('/api/v1/generate', json={'page_ids':['book01_p03'],
++        'age_level':'3-6','force':force}).json()
++    assert doc['code'] == 0, doc
++    return doc['data']['job_id']
++
++
++def terminal(client, jid):
++    deadline = time.monotonic()+40
++    while time.monotonic() < deadline:
++        doc = client.get('/api/v1/jobs/'+jid).json()['data']
++        if doc['status'] in ('done','failed','partial_failed','cancelled'):
++            return doc
++        time.sleep(.005)
++    pytest.fail('job did not finish')
++
++
++def test_http_chain_calls_B_once_and_never_rewrites_submitted_story(chain, monkeypatch):
++    client,jobs,rig,sessions=chain
++    counts={'run':0,'builder':0,'tts':0}
++    run,builder,synth=pipeline.run_page,pipeline.build_page_story,adapter.TTSClient.synthesize
++    def run_spy(*args,**kwargs):
++        counts['run']+=1;assert kwargs['m1'] is sessions[0]
++        return run(*args,**kwargs)
++    def build_spy(*args,**kwargs):
++        counts['builder']+=1;return builder(*args,**kwargs)
++    def synth_spy(*args,**kwargs):
++        counts['tts']+=1;return synth(*args,**kwargs)
++    monkeypatch.setattr(pipeline,'run_page',run_spy)
++    monkeypatch.setattr(pipeline,'build_page_story',build_spy)
++    monkeypatch.setattr(adapter.TTSClient,'synthesize',synth_spy)
++    monkeypatch.setattr(adapter,'build_page_story',lambda *a,**k:pytest.fail('legacy builder executed'))
++    jid=start(client);doc=terminal(client,jid)
++    assert doc['status']=='done',doc
++    raw=(jobs.storage.root/'json/book01_p03_story.json').read_bytes()
++    story=json.loads(raw)
++    assert counts=={'run':1,'builder':1,'tts':len(story['segments'])}
++    receipt=jobs.m1_receipts[(jid,'book01_p03')]
++    assert hashlib.sha256(raw).hexdigest()==receipt['m1_result_sha256']==sessions[0].attempt.result_sha256
++    assert receipt['generation_mode']=='m1_authorized'
++    assert rig.authority.totals()['held']==1000
++    assert 'budget_release_error' not in json.dumps(doc)
++
++
++def test_video_blocked_keeps_attempt_and_unknown_budget(chain,monkeypatch):
++    client,jobs,rig,sessions=chain
++    def blocked(*args,**kwargs):raise AppError(ErrorCode.SAFETY_BLOCKED,'blocked')
++    monkeypatch.setattr(adapter,'compose_video',blocked)
++    jid=start(client);doc=terminal(client,jid)
++    assert doc['pages'][0]['status']=='blocked'
++    receipt=jobs.m1_receipts[(jid,'book01_p03')]
++    assert receipt['m1_attempt_id']==sessions[0].attempt_id
++    assert receipt['generation_mode']=='m1_authorized'
++    assert receipt['submission_state']=='UNKNOWN'
++    assert receipt['m1_result_sha256']
++    assert rig.authority.totals()['held']==1000
++    assert not (jobs.storage.root/'json/book01_p03_story.json').exists()
++
++
++def test_release_failure_survives_business_error_and_is_audited(chain,monkeypatch):
++    client,jobs,rig,sessions=chain
++    original=jobs.adapter.m1_session_factory
++    def factory(**kw):
++        s=original(**kw)
++        def broken(*a):raise GenerationDenied('CORRUPT')
++        monkeypatch.setattr(s.consumer,'cancel',broken)
++        return s
++    def fail(*a,**kw):raise StoryInputError('fixture failure')
++    jobs.adapter.m1_session_factory=factory
++    monkeypatch.setattr(pipeline,'build_page_story',fail)
++    jid=start(client);doc=terminal(client,jid)
++    assert doc['status']=='failed'
++    key=(jid,'book01_p03');receipt=jobs.m1_receipts[key]
++    assert receipt['error']
++    assert receipt['budget_release_error']['m1_code']=='CORRUPT'
++    assert jobs.m1_reconciliation[key]['budget_release_error']==receipt['budget_release_error']
++    audit=(jobs.storage.root/'.member3/m1-reconciliation.jsonl').read_text(encoding='utf-8')
++    assert 'CORRUPT' in audit
++    assert 'budget_release_error' not in json.dumps(doc)
++    assert rig.authority.totals()['held']==1000
++
++
++def test_submit_response_lost_retains_unknown_and_never_cancels(chain,monkeypatch):
++    client,jobs,rig,sessions=chain
++    original=jobs.adapter.m1_session_factory
++    def factory(**kw):
++        s=original(**kw);submit=s.consumer.submit
++        def ambiguous(*args):
++            submit(*args)
++            raise RuntimeError('response lost')
++        monkeypatch.setattr(s.consumer,'submit',ambiguous)
++        monkeypatch.setattr(s.consumer,'cancel',lambda *a:pytest.fail('UNKNOWN cancelled'))
++        return s
++    jobs.adapter.m1_session_factory=factory
++    jid=start(client);doc=terminal(client,jid)
++    assert doc['status']=='failed'
++    key=(jid,'book01_p03')
++    assert jobs.m1_reconciliation[key]['submission_state']=='UNKNOWN'
++    assert not sessions[0].released
++    assert rig.authority.totals()['held']==1000
++    assert not (jobs.storage.root/'json/book01_p03_story.json').exists()
++    assert len(sessions)==1
++
++
++@pytest.mark.parametrize('force',[False,True])
++def test_cancel_or_force_during_worker_cannot_publish(chain,monkeypatch,force):
++    client,jobs,rig,sessions=chain
++    entered,release=threading.Event(),threading.Event()
++    original=pipeline.build_page_story
++    def blocked(*args,**kw):
++        entered.set();assert release.wait(10)
++        return original(*args,**kw)
++    monkeypatch.setattr(pipeline,'build_page_story',blocked)
++    jid=start(client);assert entered.wait(10)
++    if force:
++        replacement=start(client,force=True)
++    else:
++        client.portal.call(jobs.tasks[jid].cancel)
++    release.set()
++    client.portal.call(lambda: _drain(jobs.tasks[jid]))
++    receipt=jobs.m1_receipts[(jid,'book01_p03')]
++    assert receipt['status']=='cancelled'
++    assert sessions[0].released
++    assert not sessions[0].submission_started
++    # No old publication, even if a replacement is still executing.
++    if force:
++        terminal(client,replacement)
++        assert jobs.m1_receipts[(jid,'book01_p03')]['m1_result_sha256'] is None
++    else:
++        assert not (jobs.storage.root/'json/book01_p03_story.json').exists()
++
++
++async def _drain(task):
++    import asyncio
++    await asyncio.gather(task,return_exceptions=True)
++
++
++def test_story_mutated_after_submit_is_never_published(chain,monkeypatch):
++    client,jobs,rig,sessions=chain
++    original=adapter.Member3Session.publish
++    def tampered(s):
++        path=s.settings.json_dir/f'{s.page_id}_story.json'
++        path.write_bytes(path.read_bytes()+b' ')
++        return original(s)
++    monkeypatch.setattr(adapter.Member3Session,'publish',tampered)
++    jid=start(client);doc=terminal(client,jid)
++    assert doc['status']=='failed'
++    assert not (jobs.storage.root/'json/book01_p03_story.json').exists()
++    assert jobs.m1_receipts[(jid,'book01_p03')]['m1_result_sha256']
++    assert rig.authority.totals()['held']==1000
++
++
++def test_local_mode_does_not_request_M1(chain):
++    client,jobs,rig,sessions=chain
++    jobs.adapter.m1_session_factory=None
++    jid=start(client);doc=terminal(client,jid)
++    assert doc['status']=='done'
++    assert not sessions and not jobs.m1_receipts
++
++
++def test_receipt_serializes_every_internal_field():
++    r=pipeline.PageRunResult('book01_p03',3,'failed',generation_mode='m1_authorized',
++        error={'code':1005,'msg':'denied'},budget_release_error={'m1_code':'CORRUPT'},
++        m1_attempt_id='a',m1_result_sha256='b')
++    data=r.to_dict()
++    for key in ('generation_mode','error','status','budget_release_error','m1_attempt_id','m1_result_sha256'):
++        assert data[key]==getattr(r,key)
++
++
++def test_tts_failure_degrades_once_without_changing_committed_story(chain,monkeypatch):
++    client,jobs,rig,sessions=chain
++    calls=[]
++    # Use the existing public TTS error code without a real provider.
++    from orchestrator.vendor.member3_v116.agents.generation.errors import TTSUnavailable
++    def unavailable(self,text):
++        calls.append(text);raise TTSUnavailable('fixture TTS failure')
++    monkeypatch.setattr(adapter.TTSClient,'synthesize',unavailable)
++    jid=start(client);doc=terminal(client,jid)
++    assert doc['pages'][0]['status']=='partial',doc
++    assert 'no_audio' in doc['pages'][0]['degraded']
++    raw=(jobs.storage.root/'json/book01_p03_story.json').read_bytes()
++    assert len(calls)==len(json.loads(raw)['segments'])
++    assert hashlib.sha256(raw).hexdigest()==sessions[0].attempt.result_sha256
++
++
++def test_cancel_after_submit_keeps_unknown_and_cannot_publish(chain,monkeypatch):
++    client,jobs,rig,sessions=chain
++    entered,release=threading.Event(),threading.Event()
++    original=adapter.compose_video
++    def block(*args,**kwargs):
++        entered.set();assert release.wait(10)
++        return original(*args,**kwargs)
++    monkeypatch.setattr(adapter,'compose_video',block)
++    jid=start(client);assert entered.wait(10)
++    client.portal.call(jobs.tasks[jid].cancel);release.set()
++    client.portal.call(lambda:_drain(jobs.tasks[jid]))
++    receipt=jobs.m1_receipts[(jid,'book01_p03')]
++    assert receipt['status']=='cancelled'
++    assert receipt['submission_state']=='UNKNOWN'
++    assert receipt['m1_result_sha256']
++    assert not sessions[0].released
++    assert rig.authority.totals()['held']==1000
++    assert not (jobs.storage.root/'json/book01_p03_story.json').exists()
++
++
++def test_B_video_blocked_return_retains_internal_attempt(chain,monkeypatch,tmp_path):
++    client,jobs,rig,sessions=chain
++    s=jobs.adapter.m1_session_factory(page_id='book01_p03',job_id='direct',request_id='direct:page')
++    config=adapter.MemberSettings(data_dir=tmp_path/'direct',tts_engine='silent',
++        ffmpeg_path=os.environ['FFMPEG_PATH'],ffprobe_path=os.environ['FFPROBE_PATH'])
++    config.ensure_dirs()
++    def blocked(*args,**kwargs):raise AppError(ErrorCode.SAFETY_BLOCKED,'fixture')
++    monkeypatch.setattr(pipeline,'compose_video',blocked)
++    result=pipeline.run_page('book01_p03','3-6',config,m1=s)
++    data=result.to_dict()
++    assert data['status']=='blocked' and data['generation_mode']=='m1_authorized'
++    assert data['m1_attempt_id']==s.attempt_id
++    assert data['m1_result_sha256']==s.attempt.result_sha256
++    assert data['budget_release_error'] is None
+diff --git a/orchestrator/vendor/member3_v116/agents/generation/m1_generation.py b/orchestrator/vendor/member3_v116/agents/generation/m1_generation.py
+new file mode 100644
+index 0000000..9dbc8ac
+--- /dev/null
++++ b/orchestrator/vendor/member3_v116/agents/generation/m1_generation.py
+@@ -0,0 +1,323 @@
++"""M3 侧消费 M1 离线 Generation Attempt 的接入层。
++
++契约状态：Generation Contract V1.0 仍是 **DRAFT，未激活**。本模块只接入 M1 的
++离线参考实现（`orchestrator.services.integration_reference`）中的
++`bridge.begin_from_gate()`，不声明任何正式 Generation HTTP 接口。
++
++职责边界（与 M1 文档一致）：
++
++* M3 只拿到 M1 配置的 service token、以及 M1 分配的 attempt token / identity；
++* M3 不签发、不改写任何 token，不调用 provision / grant / put_asset / settle；
++* M3 不结算预算：submit 只是“候选结果接收”，真正扣费由 M1 可信账单适配器
++  `Authority.settle()` 完成，本模块**没有**、也不应出现 settle 方法；
++* 上游身份与 lineage（job_id / page_id / generation_id / input_revision /
++  epoch）原样保留在 attempt 上，M3 不重造上游 Identity。
++
++状态语义（来自 M1 参考库）：RESERVED 可读/可提交；submit 后预留转入 UNKNOWN
++并继续占用预算；服务重启后 recover 把 SUBMITTED 标为 UNKNOWN，禁止自动重发；
++只有 M1 可信结算后才 DONE。
++"""
++
++from __future__ import annotations
++
++import dataclasses
++from dataclasses import dataclass
++from typing import Any, Callable, Iterable, Mapping, Sequence
++
++from .errors import AppError, ErrorCode
++
++__all__ = [
++    "GenerationAttempt",
++    "GenerationDenied",
++    "M1KitUnavailable",
++    "M1GenerationConsumer",
++    "TERMINAL_DENIALS",
++]
++
++#: 这些拒绝说明当前 attempt/token 已经不能继续工作，调用方必须停止并去
++#: 查询 / 恢复 / 对账，而不是换一个幂等键重试制造新账户。
++TERMINAL_DENIALS = frozenset(
++    {
++        "TOKEN_EXPIRED",
++        "TOKEN_REVOKED",
++        "TOKEN_KIND",
++        "TOKEN_KEY_MISMATCH",
++        "FORBIDDEN",
++        "SERVICE_MISMATCH",
++        "STALE_ATTEMPT",
++        "FENCING_MISMATCH",
++        "ATTEMPT_UNRESOLVED",
++        "ATTEMPT_SUBMITTED",
++        "ATTEMPT_UNKNOWN",
++        "ATTEMPT_DONE",
++        "UNKNOWN_RETAINS_BUDGET",
++        "UNKNOWN_ATTEMPT",
++        "BUDGET_EXHAUSTED",
++        "IDEMPOTENCY_CONFLICT",
++        "ASSET_FORBIDDEN",
++        "ASSET_VERSION",
++        "UNKNOWN_ASSET",
++        "UNPROVISIONED",
++        "PRODUCTION_BLOCKED",
++        "PROVIDER_BLOCKED",
++        "CLOCK_ROLLBACK",
++        "ROLLBACK_DETECTED",
++        "MAINTENANCE",
++        "CORRUPT",
++    }
++)
++
++_INVALID = frozenset(
++    {
++        "INVALID_AMOUNT",
++        "INVALID_REQUEST",
++        "INVALID_PROMPT",
++        "INVALID_LINEAGE",
++        "INVALID_RESULT",
++        "INVALID_ASSET",
++        "INVALID_PATH",
++        "INVALID_SUBJECT",
++        "INVALID_PROJECT",
++        "INVALID_GRANT",
++        "INVALID_SETTLEMENT",
++        "MALFORMED",
++        "MALFORMED_PROVENANCE",
++    }
++)
++
++
++class M1KitUnavailable(RuntimeError):
++    """离线接入包不在当前解释器路径里。"""
++
++
++class GenerationDenied(AppError):
++    """M1 拒绝了一次 Generation 操作。
++
++    保留 M1 的原始拒绝码（``m1_code``），同时给出 M3 契约错误码：
++    参数/路径类映射为 ``1002``，其余鉴权/预算/幂等类映射为 ``1005``。
++    所有 M1 拒绝都是终止性的：M3 不得换键重试。
++    """
++
++    def __init__(self, m1_code: str, detail: str | None = None):
++        self.m1_code = m1_code
++        self.terminal = True
++        code = ErrorCode.INVALID_PARAM if m1_code in _INVALID else ErrorCode.UNAUTHORIZED
++        super().__init__(code, f"生成授权被拒绝：{m1_code}", detail=detail)
++
++    def __str__(self) -> str:  # pragma: no cover - 便于日志
++        return self.m1_code
++
++
++@dataclass(frozen=True)
++class GenerationAttempt:
++    """M1 分配的一次独立 Generation attempt（M3 只读视图）。"""
++
++    request_id: str
++    page_id: str
++    amount: int
++    attempt_id: str
++    token: str
++    identity: Mapping[str, Any]
++    assets: tuple[str, ...]
++    result_sha256: str | None = None
++
++    # ---- lineage（上游身份原样保留，M3 不重造） ----
++    @property
++    def job_id(self) -> str:
++        return str(self.identity["job_id"])
++
++    @property
++    def generation_id(self) -> str:
++        return str(self.identity["generation_id"])
++
++    @property
++    def input_revision(self) -> int:
++        return int(self.identity["input_revision"])
++
++    @property
++    def epoch(self) -> int:
++        return int(self.identity["epoch"])
++
++    @property
++    def lineage(self) -> dict[str, Any]:
++        return {
++            "job_id": self.job_id,
++            "page_id": self.page_id,
++            "generation_id": self.generation_id,
++            "input_revision": self.input_revision,
++            "epoch": self.epoch,
++        }
++
++    @property
++    def submitted(self) -> bool:
++        return self.result_sha256 is not None
++
++
++def _require_amount(amount: object) -> int:
++    if type(amount) is not int or not 1 <= amount <= 15000:
++        raise GenerationDenied("INVALID_AMOUNT", "amount 必须是 1..15000 的整数 minor units")
++    return amount
++
++
++def _load_kit():
++    try:
++        from orchestrator.services.integration_reference import Denied
++        from orchestrator.services.integration_reference.bridge import begin_from_gate
++        from orchestrator.services.vision_supervisor.supervisor import Cancelled
++    except Exception as exc:  # noqa: BLE001 - 报告为环境缺失而不是业务拒绝
++        raise M1KitUnavailable(
++            "M1 runtime dependency is unavailable; use the approved M1 runtime assembly"
++        ) from exc
++    return Denied, Cancelled, begin_from_gate
++
++
++class M1GenerationConsumer:
++    """把 M1 Gate 之后的 Generation 分配、读资产、提交结果封装成 M3 可用接口。"""
++
++    def __init__(self, authority, gate, fences, record, *, service_token: str, project: str = "M1"):
++        if not isinstance(service_token, str) or not service_token:
++            raise GenerationDenied("SERVICE_MISMATCH", "service token 缺失")
++        self.authority = authority
++        self.gate = gate
++        self.fences = fences
++        self.record = record
++        self.service_token = service_token
++        self.project = project
++
++    # ------------------------------------------------------------------ begin
++    def _asset_prefix(self) -> str:
++        """Gate 桥接按**上游** identity 的 generation/attempt 写入资产。"""
++        upstream = getattr(self.record, "identity", None)
++        generation_id = getattr(upstream, "generation_id", None)
++        attempt_id = getattr(upstream, "attempt_id", None)
++        if not generation_id or not attempt_id:
++            raise GenerationDenied("UPSTREAM_LINEAGE", "缺少上游 Gate identity")
++        return f"upstream/{generation_id}/{attempt_id}"
++
++    def begin(
++        self,
++        *,
++        page_id: str,
++        request_id: str,
++        amount: int,
++        c1,
++        c2,
++        size: tuple[int, int],
++        image: bytes,
++        final_messages: Sequence[Mapping[str, str]],
++    ) -> GenerationAttempt:
++        """走 M1 Gate 后分配一个独立 attempt；同一 request_id + 同参数幂等。"""
++        _require_amount(amount)
++        if not isinstance(request_id, str) or not request_id:
++            raise GenerationDenied("INVALID_REQUEST", "request_id 不能为空")
++        if type(image) is not bytes or not image:
++            raise GenerationDenied("IMAGE_BINDING", "必须提供不可变原图 bytes")
++        if not final_messages:
++            raise GenerationDenied("INVALID_PROMPT", "final_messages 不能为空")
++
++        Denied, Cancelled, begin_from_gate = _load_kit()
++        try:
++            response = begin_from_gate(
++                self.authority,
++                self.gate,
++                self.record,
++                self.fences,
++                c1,
++                c2,
++                size,
++                project=self.project,
++                request_id=request_id,
++                amount=amount,
++                image=image,
++                final_messages=list(final_messages),
++                service=self.service_token,
++            )
++        except Cancelled:
++            raise GenerationDenied('STALE_ATTEMPT', '上游 Generation 已被取消或换代') from None
++        except Denied as exc:
++            raise GenerationDenied(str(exc)) from None
++
++        identity = response.get("identity")
++        token = response.get("token")
++        if type(identity) is not dict or type(token) is not str:
++            raise GenerationDenied("MALFORMED", "M1 返回的分配缺 identity/token")
++        if identity.get("page_id") != page_id:
++            raise GenerationDenied("UPSTREAM_LINEAGE", "M1 身份 page_id 与请求不一致")
++        for key in ("job_id", "page_id", "generation_id", "input_revision", "epoch",
++                    "attempt_id", "fencing_token"):
++            if key not in identity:
++                raise GenerationDenied("UPSTREAM_LINEAGE", f"M1 身份缺字段 {key}")
++
++        prefix = self._asset_prefix()
++        assets = (
++            f"{prefix}/c1.json",
++            f"{prefix}/c2.json",
++            f"{prefix}/sidecar.json",
++            f"{prefix}/image.bin",
++        )
++        return GenerationAttempt(
++            request_id=request_id,
++            page_id=page_id,
++            amount=amount,
++            attempt_id=str(identity["attempt_id"]),
++            token=token,
++            identity=dict(identity),
++            assets=assets,
++        )
++
++    # ------------------------------------------------------------------- read
++    def read_asset(self, attempt: GenerationAttempt, name: str) -> bytes:
++        """按授权读取一个精确版本资产；名字必须是 attempt 绑定的四个输入之一。"""
++        Denied, Cancelled, _ = _load_kit()
++        try:
++            return self.authority.read(
++                self.service_token, attempt.token, dict(attempt.identity), name
++            )
++        except Cancelled:
++            raise GenerationDenied('STALE_ATTEMPT', '上游 Generation 已被取消或换代') from None
++        except Denied as exc:
++            raise GenerationDenied(str(exc)) from None
++
++    def read_inputs(self, attempt: GenerationAttempt) -> dict[str, bytes]:
++        """读取 Gate 桥接写入的 c1 / c2 / sidecar / image（全部离线 BLOB）。"""
++        return {name.rsplit("/", 1)[-1]: self.read_asset(attempt, name) for name in attempt.assets}
++
++    # ----------------------------------------------------------------- submit
++    def submit(self, attempt: GenerationAttempt, payload: bytes) -> GenerationAttempt:
++        """提交候选结果摘要；重复提交同内容幂等，内容变化被拒绝。"""
++        if type(payload) is not bytes:
++            raise GenerationDenied("INVALID_RESULT", "结果必须是 bytes")
++        Denied, Cancelled, _ = _load_kit()
++        try:
++            digest = self.authority.submit(
++                self.service_token, attempt.token, dict(attempt.identity), payload
++            )
++        except Cancelled:
++            raise GenerationDenied('STALE_ATTEMPT', '上游 Generation 已被取消或换代') from None
++        except Denied as exc:
++            raise GenerationDenied(str(exc)) from None
++        return dataclasses.replace(attempt, result_sha256=digest)
++
++    def run(self, attempt: GenerationAttempt, producer: Callable[[dict[str, bytes]], bytes]) -> GenerationAttempt:
++        """读授权输入 → 生成候选结果 → 提交。M3 的生成入口只看到已授权输入。"""
++        inputs = self.read_inputs(attempt)
++        payload = producer(inputs)
++        if type(payload) is not bytes:
++            raise GenerationDenied("INVALID_RESULT", "producer 必须返回 bytes")
++        return self.submit(attempt, payload)
++
++    # ----------------------------------------------------------------- cancel
++    def cancel(self, attempt: GenerationAttempt) -> None:
++        """仅释放尚未 submit 的 RESERVED；已提交的预留只能由 M1 账单对账。"""
++        Denied, Cancelled, _ = _load_kit()
++        try:
++            self.authority.cancel(attempt.attempt_id)
++        except Cancelled:
++            raise GenerationDenied('STALE_ATTEMPT', '上游 Generation 已被取消或换代') from None
++        except Denied as exc:
++            raise GenerationDenied(str(exc)) from None
++
++    # ----------------------------------------------------------------- totals
++    def totals(self) -> dict[str, int]:
++        """只读查看项目账本（spent / held / available），不触发任何预留。"""
++        return dict(self.authority.totals())
+diff --git a/orchestrator/vendor/member3_v116/agents/generation/m1_pipeline.py b/orchestrator/vendor/member3_v116/agents/generation/m1_pipeline.py
+new file mode 100644
+index 0000000..8c21b09
+--- /dev/null
++++ b/orchestrator/vendor/member3_v116/agents/generation/m1_pipeline.py
+@@ -0,0 +1,141 @@
++"""M3 业务入口的 M1 授权会话：一次页面生成对应一个 Generation Attempt。
++
++`pipeline.run_page(..., m1=session)` 只通过本会话读取由 M1 授权、Gate 桥接写入的
++c1/c2/sidecar/image；故事生成完成后把**已落盘的 story.json 原始字节**提交给 M1。
++本模块不读本地 ocr/vlm 文件，也不自行签发 Token。
++"""
++
++from __future__ import annotations
++
++import json
++from dataclasses import dataclass, field
++
++from .errors import AppError, ErrorCode
++from .m1_generation import GenerationAttempt, GenerationDenied, M1GenerationConsumer
++
++__all__ = ["M1PageSession", "M1ReleaseError", "open_session"]
++
++#: 上游已撤销 / 已换代时，M1 已经释放（或无需再释放）预留，属于可幂等处理的终态。
++_IDEMPOTENT_RELEASE = frozenset({"TOKEN_REVOKED", "STALE_ATTEMPT"})
++
++
++class M1ReleaseError(AppError):
++    """释放未提交预留失败：预算可能仍被占用，调用方必须显式对账。
++
++    只用于无法确认“已释放”的拒绝（例如 MAINTENANCE / CORRUPT / CLOCK_ROLLBACK）；
++    TOKEN_REVOKED、STALE_ATTEMPT 视为已完成的幂等终态，不会抛出本异常。
++    """
++
++    def __init__(self, m1_code: str):
++        self.m1_code = m1_code
++        super().__init__(
++            ErrorCode.UNAUTHORIZED, f"释放预算失败：{m1_code}", detail=m1_code
++        )
++
++
++@dataclass
++class M1PageSession:
++    """绑定一个 M1 Generation Attempt 的页面会话。"""
++
++    consumer: M1GenerationConsumer
++    attempt: GenerationAttempt
++    _inputs: dict[str, bytes] | None = field(default=None, repr=False)
++    submission_started: bool = False
++    submitted: bool = False
++    released: bool = False
++    release_error: str | None = None
++
++    @property
++    def page_id(self) -> str:
++        return self.attempt.page_id
++
++    @property
++    def attempt_id(self) -> str:
++        return self.attempt.attempt_id
++
++    def inputs(self) -> dict[str, bytes]:
++        """按授权读取四个输入（c1/c2/sidecar/image），只读一次。"""
++        if self._inputs is None:
++            try:
++                self._inputs = self.consumer.read_inputs(self.attempt)
++            except GenerationDenied as exc:
++                raise AppError(
++                    ErrorCode.UNAUTHORIZED, f"M1 授权读取失败：{exc.m1_code}", detail=exc.m1_code
++                ) from None
++        return self._inputs
++
++    def inputs_json(self) -> tuple[dict, dict]:
++        data = self.inputs()
++        ocr = json.loads(data["c1.json"])
++        vlm = json.loads(data["c2.json"])
++        return ocr, vlm
++
++    def ensure_page(self, page_id: str) -> None:
++        for doc in self.inputs_json():
++            if doc.get("page_id") != page_id:
++                raise AppError(
++                    ErrorCode.INVALID_PARAM,
++                    f"授权输入页身份不一致：期望 {page_id}，收到 {doc.get('page_id')!r}",
++                )
++
++    def submit_story_bytes(self, payload: bytes) -> str:
++        if self.submission_started:
++            raise AppError(ErrorCode.INVALID_PARAM, "该 Generation Attempt 已提交")
++        self.submission_started = True
++        try:
++            updated = self.consumer.submit(self.attempt, payload)
++        except GenerationDenied as exc:
++            raise AppError(
++                ErrorCode.UNAUTHORIZED, f"提交生成结果被拒绝：{exc.m1_code}", detail=exc.m1_code
++            ) from None
++        self.attempt = updated
++        self.submitted = True
++        return updated.result_sha256 or ""
++
++    def release(self) -> None:
++        """仅在尚未提交时释放预留；已提交的必须由 M1 账单对账。
++
++        - 成功取消：置 `released=True`，重复调用安全（M1 cancel 对 CANCELLED 幂等）。
++        - 上游已撤销/已换代（TOKEN_REVOKED / STALE_ATTEMPT）：视为已释放终态。
++        - 其他拒绝（MAINTENANCE / CORRUPT / CLOCK_ROLLBACK / UNKNOWN_ATTEMPT ...）：
++          抛出 `M1ReleaseError` 并记录 `release_error`，**不得**伪装成释放成功。
++        """
++        if self.submission_started or self.submitted:
++            return
++        if self.released:
++            return
++        try:
++            self.consumer.cancel(self.attempt)
++        except GenerationDenied as exc:
++            if exc.m1_code in _IDEMPOTENT_RELEASE:
++                self.released = True
++                return
++            self.release_error = exc.m1_code
++            raise M1ReleaseError(exc.m1_code) from None
++        self.released = True
++
++
++def open_session(
++    consumer: M1GenerationConsumer,
++    *,
++    page_id: str,
++    request_id: str,
++    amount: int,
++    c1,
++    c2,
++    size: tuple[int, int],
++    image: bytes,
++    final_messages,
++) -> M1PageSession:
++    """Gate → 独立 attempt；同一 request_id 的重试会拿回同一分配。"""
++    attempt = consumer.begin(
++        page_id=page_id,
++        request_id=request_id,
++        amount=amount,
++        c1=c1,
++        c2=c2,
++        size=size,
++        image=image,
++        final_messages=final_messages,
++    )
++    return M1PageSession(consumer=consumer, attempt=attempt)
+diff --git a/orchestrator/vendor/member3_v116/agents/generation/m1_story.py b/orchestrator/vendor/member3_v116/agents/generation/m1_story.py
+new file mode 100644
+index 0000000..1ff4311
+--- /dev/null
++++ b/orchestrator/vendor/member3_v116/agents/generation/m1_story.py
+@@ -0,0 +1,38 @@
++"""用 M3 现有故事生成器消费 M1 授权的输入，产出候选 Generation 结果。
++
++该函数是 M1 接入层与 M3 生成算法之间的最小胶水：输入只能是
++`M1GenerationConsumer.read_inputs()` 返回的已授权 c1/c2 字节，
++输出是待提交的候选结果字节；不读写本地 ocr/vlm 文件、不自行拼接路径。
++"""
++
++from __future__ import annotations
++
++import json
++
++from .config import Settings
++from .story.builder import build_page_story
++
++__all__ = ["story_payload"]
++
++
++def story_payload(
++    inputs: dict[str, bytes],
++    *,
++    age_level: str = "3-6",
++    settings: Settings | None = None,
++) -> bytes:
++    """c1/c2（已授权字节）→ C3 故事 JSON 字节。"""
++    ocr = json.loads(inputs["c1.json"])
++    vlm = json.loads(inputs["c2.json"])
++    page_id = ocr["page_id"]
++    result = build_page_story(
++        page_id,
++        age_level,
++        settings or Settings(),
++        persist=False,
++        ocr=ocr,
++        vlm=vlm,
++    )
++    return json.dumps(
++        result.doc, ensure_ascii=False, sort_keys=True, separators=(",", ":")
++    ).encode("utf-8")
+diff --git a/orchestrator/vendor/member3_v116/agents/generation/pipeline.py b/orchestrator/vendor/member3_v116/agents/generation/pipeline.py
+index ca64232..5e6fc8d 100644
+--- a/orchestrator/vendor/member3_v116/agents/generation/pipeline.py
++++ b/orchestrator/vendor/member3_v116/agents/generation/pipeline.py
+@@ -17,11 +17,15 @@ import json
+ import logging
+ import time
+ from dataclasses import dataclass, field
++from typing import TYPE_CHECKING
+ from datetime import datetime, timezone
+ 
+ from .config import Settings
+ from .errors import AppError, ErrorCode, VideoPublishError
+ from .ids import page_no_of, ulid
++
++if TYPE_CHECKING:  # pragma: no cover
++    from .m1_pipeline import M1PageSession
+ from .schemas import StoryDoc
+ from .story.builder import StoryResult, build_page_story
+ from .storage import PageFiles, asset_url, read_json
+@@ -94,6 +98,11 @@ class PageRunResult:
+     video_error: dict | None = None
+     elapsed_ms: int = 0
+     story: StoryResult | None = None
++    generation_mode: str = "mock_static"
++    m1_attempt_id: str | None = None
++    m1_result_sha256: str | None = None
++    #: 失败路径上释放 M1 预留失败时记录；None 表示无需释放或释放成功。
++    budget_release_error: dict | None = None
+ 
+     def to_dict(self) -> dict:
+         """与 /jobs 的 pages[] 结构对齐（video_error 是本地调试附加字段）。"""
+@@ -106,12 +115,39 @@ class PageRunResult:
+             "video_url": self.video_url,
+             "error": self.error,
+             "elapsed_ms": self.elapsed_ms,
++            "generation_mode": self.generation_mode,
++            "m1_attempt_id": self.m1_attempt_id,
++            "m1_result_sha256": self.m1_result_sha256,
++            "budget_release_error": self.budget_release_error,
+         }
+         if self.video_error:
+             payload["video_error"] = self.video_error
+         return payload
+ 
+ 
++def _release_on_failure(m1: "M1PageSession | None") -> dict | None:
++    """失败路径的统一释放：只释放未提交的预留，释放失败必须显式上报。"""
++    if m1 is None:
++        return None
++    try:
++        m1.release()
++        return None
++    except AppError as exc:
++        m1_code = getattr(exc, "m1_code", None)
++        logger.error(
++            "M1 预算释放失败：%s（attempt=%s, m1_code=%s）；预算可能仍被占用，需 M1 对账",
++            exc.msg,
++            m1.attempt_id,
++            m1_code,
++        )
++        return {"code": int(exc.code), "msg": exc.msg, "m1_code": m1_code}
++    except Exception:
++        # A lost cancel response does not prove the reservation was released.
++        logger.exception("M1 预算释放结果不确定；需 M1 对账")
++        return {"code": int(ErrorCode.UNAVAILABLE), "msg": "预算释放结果不确定",
++                "m1_code": "RELEASE_UNCERTAIN"}
++
++
+ def run_page(
+     page_id: str,
+     age_level: str,
+@@ -121,12 +157,21 @@ def run_page(
+     tts_client: TTSClient | None = None,
+     ocr: dict | None = None,
+     vlm: dict | None = None,
++    m1: "M1PageSession | None" = None,
++    cancelled=None,
+ ) -> PageRunResult:
+     started = time.perf_counter()
+     files = PageFiles(settings, page_id)
+     page_no = page_no_of(page_id)
+ 
+     try:
++        if cancelled is not None and cancelled():
++            raise AppError(ErrorCode.UNAVAILABLE, "页面生成已取消")
++        if m1 is not None:
++            # 授权模式下输入只来自 M1 Gate 桥接的不可变 bytes，不读本地 ocr/vlm
++            m1.ensure_page(page_id)
++            ocr, vlm = m1.inputs_json()
++
+         story = build_page_story(
+             page_id,
+             age_level,
+@@ -136,6 +181,8 @@ def run_page(
+             vlm=vlm,
+         )
+     except AppError as exc:
++        # 授权读取失败 / 页身份不一致 / 故事生成失败走同一释放路径
++        release_error = _release_on_failure(m1)
+         status = "blocked" if exc.code == ErrorCode.SAFETY_BLOCKED else "failed"
+         return PageRunResult(
+             page_id=page_id,
+@@ -143,8 +190,55 @@ def run_page(
+             status=status,
+             error={"code": int(exc.code), "msg": exc.msg},
+             elapsed_ms=int((time.perf_counter() - started) * 1000),
++            generation_mode="m1_authorized" if m1 is not None else "mock_static",
++            m1_attempt_id=m1.attempt_id if m1 is not None else None,
++            budget_release_error=release_error,
+         )
+ 
++    if cancelled is not None and cancelled():
++        release_error = _release_on_failure(m1)
++        return PageRunResult(page_id, page_no, "failed",
++            error={"code": int(ErrorCode.UNAVAILABLE), "msg": "页面生成已取消"},
++            generation_mode="m1_authorized" if m1 else "mock_static",
++            m1_attempt_id=m1.attempt_id if m1 else None, budget_release_error=release_error)
++
++    submitted_sha: str | None = None
++    if m1 is not None:
++        # 提交前：读 story.json 原始字节。读取失败仍属"未提交"，必须释放预留。
++        try:
++            payload = files.story.read_bytes()
++        except OSError as exc:
++            release_error = _release_on_failure(m1)
++            code = ErrorCode.NOT_FOUND if isinstance(exc, FileNotFoundError) else ErrorCode.UNAVAILABLE
++            logger.error("读取 story.json 失败（%s），已尝试释放 M1 预留：%s", files.story, exc)
++            return PageRunResult(
++                page_id=page_id,
++                page_no=page_no,
++                status="failed",
++                error={"code": int(code), "msg": "读取故事结果失败"},
++                elapsed_ms=int((time.perf_counter() - started) * 1000),
++                story=story,
++                generation_mode="m1_authorized",
++                m1_attempt_id=m1.attempt_id,
++                budget_release_error=release_error,
++            )
++
++        # 提交后：submit 失败可能意味着 M1 已进入 UNKNOWN，不得假定未提交，
++        # 也不得自行释放；由调用方按错误码查询/对账。
++        try:
++            submitted_sha = m1.submit_story_bytes(payload)
++        except AppError as exc:
++            return PageRunResult(
++                page_id=page_id,
++                page_no=page_no,
++                status="failed",
++                error={"code": int(exc.code), "msg": exc.msg},
++                elapsed_ms=int((time.perf_counter() - started) * 1000),
++                story=story,
++                generation_mode="m1_authorized",
++                m1_attempt_id=m1.attempt_id,
++            )
++
+     degraded = list(story.degraded)
+     story_url = asset_url(settings, files.story)
+     video_url: str | None = None
+@@ -163,6 +257,9 @@ def run_page(
+                     status="blocked",
+                     degraded=degraded,
+                     story_url=None,
++                    generation_mode="m1_authorized" if m1 else "mock_static",
++                    m1_attempt_id=m1.attempt_id if m1 else None,
++                    m1_result_sha256=submitted_sha,
+                     error={"code": int(exc.code), "msg": exc.msg},
+                     elapsed_ms=int((time.perf_counter() - started) * 1000),
+                 )
+@@ -185,6 +282,9 @@ def run_page(
+         video_error=video_error,
+         elapsed_ms=int((time.perf_counter() - started) * 1000),
+         story=story,
++        generation_mode="m1_authorized" if m1 is not None else "mock_static",
++        m1_attempt_id=m1.attempt_id if m1 is not None else None,
++        m1_result_sha256=submitted_sha,
+     )
+ 
+ 
+diff --git a/orchestrator/vendor/member3_v116/tests/conftest.py b/orchestrator/vendor/member3_v116/tests/conftest.py
+index 894d0a6..f559d8d 100644
+--- a/orchestrator/vendor/member3_v116/tests/conftest.py
++++ b/orchestrator/vendor/member3_v116/tests/conftest.py
+@@ -8,7 +8,7 @@ from pathlib import Path
+ 
+ import pytest
+ 
+-from agents.generation.config import Settings
++from orchestrator.vendor.member3_v116.agents.generation.config import Settings
+ 
+ ROOT = Path(__file__).resolve().parents[1]
+ BUNDLED_FFMPEG_DIR = ROOT / "_tools" / "ffmpeg" / "ffmpeg-9.0.2-essentials_build" / "bin"
+diff --git a/orchestrator/vendor/member3_v116/tests/m1_offline_rig.py b/orchestrator/vendor/member3_v116/tests/m1_offline_rig.py
+new file mode 100644
+index 0000000..85e2e19
+--- /dev/null
++++ b/orchestrator/vendor/member3_v116/tests/m1_offline_rig.py
+@@ -0,0 +1,246 @@
++"""离线 M1 装配：真实 Gate + Authority + Fences + C1/C2/Sidecar/原图 fixture。
++
++只用于测试。全部身份、密钥、Token、资产均在临时目录内生成，测试结束即删除；
++不连接网络、不调用真实模型、不产生真实费用。
++"""
++
++from __future__ import annotations
++
++import hashlib
++import json
++import sys
++from dataclasses import asdict, dataclass, field, replace
++from pathlib import Path
++from types import SimpleNamespace
++
++from orchestrator.services.integration_reference import Authority, OfflineKMS  # noqa: E402
++from orchestrator.services.vision_supervisor.gate import Gate  # noqa: E402
++from orchestrator.services.vision_supervisor.shared import SharedFences  # noqa: E402
++from orchestrator.services.vision_supervisor.supervisor import Snapshot  # noqa: E402
++
++from orchestrator.vendor.member3_v116.agents.generation.m1_generation import M1GenerationConsumer  # noqa: E402
++
++BOOK = "book01"
++IMAGE = b"\x89PNG\r\n\x1a\n" + bytes(range(64)) * 4
++SIZE = (96, 128)
++
++
++def page_id(page_no: int) -> str:
++    return f"{BOOK}_p{page_no:02d}"
++
++
++def _c1_document(page: str, page_no: int, *, text: str = "小熊在森林里慢慢散步。") -> dict:
++    return {
++        "schema_version": "1.0",
++        "book_id": BOOK,
++        "page_id": page,
++        "page_no": page_no,
++        "status": "ok",
++        "image_width": SIZE[0],
++        "image_height": SIZE[1],
++        "text_blocks": [
++            {
++                "block_id": f"{page}_t01",
++                "order": 1,
++                "text": text,
++                "bbox": [4, 8, 80, 40],
++                "confidence": 0.93,
++            }
++        ],
++        "page_confidence": 0.93,
++        "elapsed_ms": 7,
++    }
++
++
++def _c2_document(page: str, page_no: int, *, description: str = "一只棕色小熊站在树边。") -> dict:
++    return {
++        "schema_version": "1.0",
++        "book_id": BOOK,
++        "page_id": page,
++        "page_no": page_no,
++        "status": "ok",
++        "image_width": SIZE[0],
++        "image_height": SIZE[1],
++        "description": description,
++        "objects": [
++            {
++                "object_id": f"{page}_o01",
++                "label": "小熊",
++                "bbox": [10, 12, 60, 90],
++                "confidence": 0.88,
++            }
++        ],
++        "scene_tags": ["森林"],
++        "safety": {"pass": True, "flags": []},
++        "elapsed_ms": 9,
++    }
++
++
++def _snapshots(identity, page_no: int) -> tuple[Snapshot, Snapshot]:
++    page = identity.page_id
++    c1raw = json.dumps(_c1_document(page, page_no), ensure_ascii=False, separators=(",", ":")).encode()
++    c2doc = _c2_document(page, page_no)
++    c2raw = json.dumps(c2doc, ensure_ascii=False, separators=(",", ":")).encode()
++    refs = dict(asdict(identity))
++    refs.update(
++        {
++            "schema_version": "vision_refs/0.1",
++            "c2": {
++                "asset_id": "fixture-c2",
++                "schema_version": "1.0",
++                "relative_path": f"json/{page}_vlm.json",
++                "sha256": hashlib.sha256(c2raw).hexdigest(),
++            },
++            "source": {
++                "component_mode": "fixture",
++                "model_ref": "fixture-vlm",
++                "prompt_sha256": "a" * 64,
++                "evidence_ref": "offline",
++            },
++            "observations": [],
++        }
++    )
++    sidecar = json.dumps(refs, ensure_ascii=False, separators=(",", ":")).encode()
++    image_sha = hashlib.sha256(IMAGE).hexdigest()
++    c1 = Snapshot(
++        replace(identity, attempt_id="ocr", fencing_token="ocr-token"),
++        "fixture",
++        {"c1": c1raw},
++        image_sha256=image_sha,
++        c1_sha256=hashlib.sha256(c1raw).hexdigest(),
++    )
++    c2 = Snapshot(identity, "fixture", {"c2": c2raw, "sidecar": sidecar}, image_sha256=image_sha)
++    return c1, c2
++
++
++@dataclass
++class PageFixture:
++    page_no: int
++    page_id: str
++    record: object
++    identity: object
++    c1: Snapshot
++    c2: Snapshot
++
++
++@dataclass
++class Rig:
++    authority: Authority
++    keys: OfflineKMS
++    clock: list
++    fences: Fences
++    gate: Gate
++    service_token: str
++    db_path: Path
++    anchor_path: Path
++    pages: dict = field(default_factory=dict)
++
++    @property
++    def image(self) -> bytes:
++        return IMAGE
++
++    def page(self, page_no: int = 3) -> PageFixture:
++        """在同一 Authority 上为另一页建立 SharedFences 生命周期与输入快照。"""
++        if page_no in self.pages:
++            return self.pages[page_no]
++        page = page_id(page_no)
++        record, _ = self.fences.begin(f"job-offline-{page_no}", page)
++        if record.identity is None:
++            identity = self.fences.attempt(record)
++            # reserve_stage 是 M1 侧把 identity 持久化为 Current 的唯一入口
++            self.authority.reserve_stage(identity, "vlm", "m3-offline-fixture")
++        else:
++            # 重启/恢复：直接使用 SQLite 中已持久化的 Current identity，不重新签发
++            identity = record.identity
++        c1, c2 = _snapshots(identity, page_no)
++        node = PageFixture(page_no, page, record, identity, c1, c2)
++        self.pages[page_no] = node
++        return node
++
++    def consumer_for(self, page_no: int = 3, *, service_token: str | None = None) -> M1GenerationConsumer:
++        node = self.page(page_no)
++        return M1GenerationConsumer(
++            self.authority,
++            self.gate,
++            self.fences,
++            node.record,
++            service_token=service_token or self.service_token,
++        )
++
++    # 兼容默认页的旧用法
++    def consumer(self, *, service_token: str | None = None) -> M1GenerationConsumer:
++        return self.consumer_for(3, service_token=service_token)
++
++    def reopen(self) -> "Rig":
++        """模拟 M1 服务重启：同一 SQLite + 同一 anchor + 同一离线密钥根。"""
++        authority = Authority(
++            self.db_path, self.anchor_path, self.keys, lambda: self.clock[0], offline_test=True
++        )
++        return replace(
++            self, authority=authority, gate=Gate({"fixture"}), fences=SharedFences(authority), pages={}
++        )
++
++
++def make_rig(root: Path, *, clock_start: int = 1000, service_ttl: int = 300, page_no: int = 3) -> Rig:
++    root = Path(root)
++    root.mkdir(parents=True, exist_ok=True)
++    clock = [clock_start]
++    keys = OfflineKMS(seed=b"m3-m1-offline-integration-fixture-seed")
++    authority = Authority.provision(
++        root / "authority.sqlite", root / "retained.anchor", keys, lambda: clock[0], offline_test=True
++    )
++    authority.provision_project("M1")
++    authority.grant("M3", "M1", "generate")
++    authority.grant("M3", "M1", "assets.read")
++
++    fences = SharedFences(authority)
++    gate = Gate({"fixture"})
++    service_token = authority.service_token("M3", ttl=service_ttl)
++    rig = Rig(
++        authority=authority,
++        keys=keys,
++        clock=clock,
++        fences=fences,
++        gate=gate,
++        service_token=service_token,
++        db_path=root / "authority.sqlite",
++        anchor_path=root / "retained.anchor",
++    )
++    rig.page(page_no)
++    return rig
++
++
++def begin(
++    rig: Rig,
++    *,
++    page_no: int = 3,
++    request: str = "req-1",
++    amount: int = 1000,
++    consumer: M1GenerationConsumer | None = None,
++):
++    """走一次 Gate → Generation Attempt 分配。"""
++    node = rig.page(page_no)
++    consumer = consumer or rig.consumer_for(page_no)
++    return consumer.begin(
++        page_id=node.page_id,
++        request_id=request,
++        amount=amount,
++        c1=node.c1,
++        c2=node.c2,
++        size=SIZE,
++        image=IMAGE,
++        final_messages=[{"role": "user", "content": "为这一页生成儿童故事"}],
++    )
++
++
++def result_payload(inputs: dict, *, text: str | None = None) -> bytes:
++    """确定性的“生成结果”：消费已授权输入后产出的候选故事 JSON。"""
++    c1 = json.loads(inputs["c1.json"])
++    body = text or (c1["text_blocks"][0]["text"] if c1["text_blocks"] else "")
++    doc = {
++        "schema": "m3-generation-candidate/0.1",
++        "page_id": c1["page_id"],
++        "narration": body,
++        "source_mode": "fixture",
++    }
++    return json.dumps(doc, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+diff --git a/orchestrator/vendor/member3_v116/tests/test_http_audio.py b/orchestrator/vendor/member3_v116/tests/test_http_audio.py
+index 50f67f3..3ba2e83 100644
+--- a/orchestrator/vendor/member3_v116/tests/test_http_audio.py
++++ b/orchestrator/vendor/member3_v116/tests/test_http_audio.py
+@@ -7,10 +7,10 @@ from pathlib import Path
+ 
+ import pytest
+ 
+-from agents.generation.config import Settings
+-from agents.generation.errors import AppError, ErrorCode, TTSFailed, TTSUnavailable
+-from agents.generation.ids import tts_cache_key
+-from agents.generation.tts.client import TTSClient
++from orchestrator.vendor.member3_v116.agents.generation.config import Settings
++from orchestrator.vendor.member3_v116.agents.generation.errors import AppError, ErrorCode, TTSFailed, TTSUnavailable
++from orchestrator.vendor.member3_v116.agents.generation.ids import tts_cache_key
++from orchestrator.vendor.member3_v116.agents.generation.tts.client import TTSClient
+ 
+ 
+ class FakeResponse:
+diff --git a/orchestrator/vendor/member3_v116/tests/test_ids.py b/orchestrator/vendor/member3_v116/tests/test_ids.py
+index c0d910d..5f8990a 100644
+--- a/orchestrator/vendor/member3_v116/tests/test_ids.py
++++ b/orchestrator/vendor/member3_v116/tests/test_ids.py
+@@ -4,7 +4,7 @@ import re
+ 
+ import pytest
+ 
+-from agents.generation.ids import (
++from orchestrator.vendor.member3_v116.agents.generation.ids import (
+     book_id_of,
+     is_page_id,
+     make_page_id,
+diff --git a/orchestrator/vendor/member3_v116/tests/test_m1_budget_and_recovery.py b/orchestrator/vendor/member3_v116/tests/test_m1_budget_and_recovery.py
+new file mode 100644
+index 0000000..c7f85c4
+--- /dev/null
++++ b/orchestrator/vendor/member3_v116/tests/test_m1_budget_and_recovery.py
+@@ -0,0 +1,166 @@
++"""M3 对 M1 离线预算账本的专项验证：预留 / 结算 / 释放 / UNKNOWN / 重启。
++
++项目总预算固定 15000 minor units；全部为离线 fixture，不产生真实费用。
++"""
++
++from __future__ import annotations
++
++import pytest
++
++from orchestrator.vendor.member3_v116.agents.generation.m1_generation import GenerationDenied
++from orchestrator.vendor.member3_v116.tests.m1_offline_rig import begin, make_rig, result_payload
++
++
++@pytest.fixture
++def rig(tmp_path):
++    return make_rig(tmp_path / "m1-budget")
++
++
++def _code(fn, *args, **kwargs) -> str:
++    with pytest.raises(GenerationDenied) as info:
++        fn(*args, **kwargs)
++    return info.value.m1_code
++
++
++def test_budget_insufficient_is_rejected(rig):
++    begin(rig, page_no=3, request="req-a", amount=14000)
++    assert rig.authority.totals() == {"spent": 0, "held": 14000, "available": 1000}
++
++    assert _code(begin, rig, page_no=4, request="req-b", amount=1001) == "BUDGET_EXHAUSTED"
++    assert rig.authority.totals() == {"spent": 0, "held": 14000, "available": 1000}
++    # 恰好用满仍允许
++    assert begin(rig, page_no=4, request="req-c", amount=1000).amount == 1000
++    assert rig.authority.totals() == {"spent": 0, "held": 15000, "available": 0}
++
++
++def test_invalid_amounts_never_reserve(rig):
++    node = rig.page(3)
++    consumer = rig.consumer_for(3)
++    for bad in (True, False, 0, -1, 15001, 1.0, "1000", None):
++        with pytest.raises(GenerationDenied) as info:
++            consumer.begin(
++                page_id=node.page_id,
++                request_id=f"bad-{bad!r}",
++                amount=bad,
++                c1=node.c1,
++                c2=node.c2,
++                size=(96, 128),
++                image=rig.image,
++                final_messages=[{"role": "user", "content": "x"}],
++            )
++        assert info.value.m1_code == "INVALID_AMOUNT"
++    assert rig.authority.totals() == {"spent": 0, "held": 0, "available": 15000}
++
++
++def test_duplicate_request_does_not_double_reserve(rig):
++    first = begin(rig, request="dup", amount=1200)
++    second = begin(rig, request="dup", amount=1200)
++    assert first.attempt_id == second.attempt_id
++    assert rig.authority.totals() == {"spent": 0, "held": 1200, "available": 13800}
++
++
++def test_trusted_settle_charges_once(rig):
++    attempt = begin(rig, request="settle", amount=1000)
++    consumer = rig.consumer_for(3)
++    attempt = consumer.run(attempt, result_payload)
++    rig.authority.settle(attempt.attempt_id, 900, "receipt-1")
++    rig.authority.settle(attempt.attempt_id, 900, "receipt-1")  # 重复结算幂等
++    assert rig.authority.totals() == {"spent": 900, "held": 0, "available": 14100}
++
++
++def test_client_cannot_release_after_submit(rig):
++    attempt = begin(rig, request="no-refund", amount=1000)
++    consumer = rig.consumer_for(3)
++    attempt = consumer.run(attempt, result_payload)
++    # 已提交：客户端不能凭报错要求退款
++    assert _code(consumer.cancel, attempt) == "UNKNOWN_RETAINS_BUDGET"
++    assert rig.authority.totals() == {"spent": 0, "held": 1000, "available": 14000}
++
++
++def test_unknown_retains_budget_across_restart(rig):
++    attempt = begin(rig, request="unknown", amount=1000)
++    consumer = rig.consumer_for(3)
++    attempt = consumer.run(attempt, result_payload)
++    assert rig.authority.totals()["held"] == 1000
++
++    restarted = rig.reopen()
++    restarted.authority.recover()  # M1 运维动作，M3 不调用
++    # UNKNOWN 不自动释放
++    assert restarted.authority.totals() == {"spent": 0, "held": 1000, "available": 14000}
++    restarted_consumer = restarted.consumer_for(3)
++    assert _code(restarted_consumer.cancel, attempt) == "UNKNOWN_RETAINS_BUDGET"
++    assert _code(begin, restarted, page_no=3, request="next") == "ATTEMPT_UNRESOLVED"
++
++    # 只有可信账单结算才能结束
++    restarted.authority.settle(attempt.attempt_id, 1000, "receipt-unknown")
++    assert restarted.authority.totals() == {"spent": 1000, "held": 0, "available": 14000}
++
++
++def test_restart_does_not_reset_ledger(rig):
++    attempt = begin(rig, page_no=3, request="spend-1", amount=1000)
++    consumer = rig.consumer_for(3)
++    attempt = consumer.run(attempt, result_payload)
++    rig.authority.settle(attempt.attempt_id, 900, "receipt-spend")
++
++    restarted = rig.reopen()
++    assert restarted.authority.totals() == {"spent": 900, "held": 0, "available": 14100}
++    # 重启后额度没有被"重置"回 15000
++    assert begin(restarted, page_no=4, request="after-restart", amount=14100)
++    assert restarted.authority.totals() == {"spent": 900, "held": 14100, "available": 0}
++    assert _code(begin, restarted, page_no=5, request="over", amount=1) == "BUDGET_EXHAUSTED"
++
++
++def test_attempts_cannot_borrow_authorization(rig):
++    a = begin(rig, page_no=3, request="attempt-a", amount=500)
++    b = begin(rig, page_no=4, request="attempt-b", amount=500)
++    assert a.attempt_id != b.attempt_id
++
++    consumer_a = rig.consumer_for(3)
++    consumer_b = rig.consumer_for(4)
++    # A 的 token 读不到 B 的资产版本
++    assert _code(consumer_a.read_asset, a, b.assets[0]) == "ASSET_FORBIDDEN"
++    # A 的 token 配上 B 的 identity 也不行
++    import dataclasses
++
++    assert _code(consumer_a.read_asset, dataclasses.replace(a, identity=b.identity), a.assets[0]) == "FENCING_MISMATCH"
++    # 两个 attempt 各自独立预留
++    assert rig.authority.totals() == {"spent": 0, "held": 1000, "available": 14000}
++    assert consumer_b.read_asset(b, b.assets[0])
++
++
++def test_submitted_attempts_keep_hold_until_settled(rig):
++    attempt = begin(rig, request="hold", amount=15000)
++    consumer = rig.consumer_for(3)
++    attempt = consumer.run(attempt, result_payload)
++    assert rig.authority.totals() == {"spent": 0, "held": 15000, "available": 0}
++    rig.authority.settle(attempt.attempt_id, 15000, "receipt-full")
++    assert rig.authority.totals() == {"spent": 15000, "held": 0, "available": 0}
++
++
++def test_project_binding_rejects_unknown_project(rig):
++    node = rig.page(3)
++    other = rig.consumer_for(3)
++    other.project = "OTHER"
++    with pytest.raises(GenerationDenied) as info:
++        other.begin(
++            page_id=node.page_id,
++            request_id="req-other-project",
++            amount=100,
++            c1=node.c1,
++            c2=node.c2,
++            size=(96, 128),
++            image=rig.image,
++            final_messages=[{"role": "user", "content": "x"}],
++        )
++    assert info.value.m1_code in {"FORBIDDEN", "UNKNOWN_PROJECT", "PROJECT_ACCOUNT_FIXED"}
++    assert rig.authority.totals()["held"] == 0
++
++
++def test_settlement_cannot_exceed_reservation(rig):
++    attempt = begin(rig, request="over-settle", amount=1000)
++    consumer = rig.consumer_for(3)
++    attempt = consumer.run(attempt, result_payload)
++    with pytest.raises(Exception) as info:
++        rig.authority.settle(attempt.attempt_id, 1001, "receipt-over")
++    assert "INVALID_SETTLEMENT" in str(info.value)
++    assert rig.authority.totals() == {"spent": 0, "held": 1000, "available": 14000}
+diff --git a/orchestrator/vendor/member3_v116/tests/test_m1_generation_consumer.py b/orchestrator/vendor/member3_v116/tests/test_m1_generation_consumer.py
+new file mode 100644
+index 0000000..e720093
+--- /dev/null
++++ b/orchestrator/vendor/member3_v116/tests/test_m1_generation_consumer.py
+@@ -0,0 +1,219 @@
++"""M3 消费 M1 离线 Generation 参考实现：Gate / Token / 资产 / 提交 / 幂等。
++
++全部用例使用临时 SQLite + 临时离线密钥 + 真实 M1 Gate，不联网、不调用模型、
++不产生任何真实费用；Generation Contract V1.0 保持 DRAFT 未激活。
++"""
++
++from __future__ import annotations
++
++import pytest
++
++from orchestrator.vendor.member3_v116.agents.generation.m1_generation import (
++    GenerationDenied,
++    M1GenerationConsumer,
++    TERMINAL_DENIALS,
++)
++from orchestrator.vendor.member3_v116.tests.m1_offline_rig import SIZE, begin, make_rig, result_payload
++
++
++@pytest.fixture
++def rig(tmp_path):
++    return make_rig(tmp_path / "m1")
++
++
++def _code(fn, *args, **kwargs) -> str:
++    with pytest.raises(GenerationDenied) as info:
++        fn(*args, **kwargs)
++    return info.value.m1_code
++
++
++def test_gate_begin_allocates_attempt_and_keeps_lineage(rig):
++    node = rig.page(3)
++    attempt = begin(rig)
++
++    # 1) Gate 之后由 M1 分配独立 attempt，而不是复用上游 OCR/VLM attempt
++    assert attempt.attempt_id != node.identity.attempt_id
++    assert attempt.attempt_id != node.identity.fencing_token
++    # 2) 上游五元 lineage 原样保留
++    assert attempt.lineage == {
++        "job_id": node.identity.job_id,
++        "page_id": node.identity.page_id,
++        "generation_id": node.identity.generation_id,
++        "input_revision": node.identity.input_revision,
++        "epoch": node.identity.epoch,
++    }
++    # 3) begin 原子预留
++    assert rig.authority.totals() == {"spent": 0, "held": 1000, "available": 14000}
++    assert attempt.amount == 1000
++    assert attempt.token and attempt.token != rig.service_token
++
++
++def test_request_id_idempotent_and_conflict(rig):
++    first = begin(rig, request="same-request")
++    second = begin(rig, request="same-request")
++    assert second.attempt_id == first.attempt_id
++    assert second.token == first.token
++    assert rig.authority.totals()["held"] == 1000  # 没有重复预留
++
++    assert _code(begin, rig, page_no=3, request="same-request", amount=1001) == "IDEMPOTENCY_CONFLICT"
++    # 同一页在新请求上仍未对账 → 必须先把上一 attempt 处理掉
++    assert _code(begin, rig, page_no=3, request="another") == "ATTEMPT_UNRESOLVED"
++
++
++def test_service_binding_rejects_other_service(rig):
++    m2_token = rig.authority.service_token("M2", ttl=300)
++    consumer = rig.consumer_for(3, service_token=m2_token)
++    node = rig.page(3)
++    with pytest.raises(GenerationDenied) as info:
++        consumer.begin(
++            page_id=node.page_id, request_id="req-m2", amount=100,
++            c1=node.c1, c2=node.c2, size=SIZE, image=rig.image,
++            final_messages=[{"role": "user", "content": "x"}],
++        )
++    # M2 身份没有 M3 的 generate 授权：服务绑定/授权必须拒绝
++    assert info.value.m1_code in {"FORBIDDEN", "SERVICE_MISMATCH"}
++    assert rig.authority.totals()["held"] == 0
++
++
++def test_read_authorized_inputs_and_path_denial(rig):
++    attempt = begin(rig)
++    consumer = rig.consumer_for(3)
++    inputs = consumer.read_inputs(attempt)
++    assert set(inputs) == {"c1.json", "c2.json", "sidecar.json", "image.bin"}
++    assert inputs["image.bin"] == rig.image
++    assert b"page_id" in inputs["c1.json"]
++
++    assert _code(consumer.read_asset, attempt, "private/secret") == "ASSET_FORBIDDEN"
++    assert _code(consumer.read_asset, attempt, "../escape") == "INVALID_PATH"
++
++
++def test_submit_idempotent_and_content_change_rejected(rig):
++    attempt = begin(rig)
++    consumer = rig.consumer_for(3)
++    payload = result_payload(consumer.read_inputs(attempt))
++    submitted = consumer.submit(attempt, payload)
++    digest = submitted.result_sha256
++    assert digest and len(digest) == 64
++
++    # 相同内容重复提交：返回同一摘要，不重复结算，也不需要再读输入
++    again = consumer.submit(attempt, payload)
++    assert again.result_sha256 == digest
++    totals = rig.authority.totals()
++    assert totals == {"spent": 0, "held": 1000, "available": 14000}
++    # 已提交后不允许再读资产（状态已离开 RESERVED）
++    assert _code(consumer.read_asset, attempt, attempt.assets[0]) == "ATTEMPT_SUBMITTED"
++
++    # 内容变化：拒绝
++    assert _code(consumer.submit, attempt, b"changed") == "IDEMPOTENCY_CONFLICT"
++
++
++def test_token_expiry_is_terminal(rig):
++    attempt = begin(rig)
++    consumer = rig.consumer_for(3)
++    rig.clock[0] += 121  # attempt token 默认 ttl=120
++    assert _code(consumer.read_asset, attempt, attempt.assets[0]) == "TOKEN_EXPIRED"
++    assert "TOKEN_EXPIRED" in TERMINAL_DENIALS
++    # 过期不自动退款：预留仍被持有
++    assert rig.authority.totals()["held"] == 1000
++
++
++def test_cancel_revokes_token_and_releases_reservation(rig):
++    attempt = begin(rig)
++    consumer = rig.consumer_for(3)
++    consumer.cancel(attempt)
++    assert rig.authority.totals() == {"spent": 0, "held": 0, "available": 15000}
++    assert _code(consumer.read_asset, attempt, attempt.assets[0]) == "TOKEN_REVOKED"
++    # 重复 cancel 幂等
++    consumer.cancel(attempt)
++
++
++def test_stale_attempt_after_settlement(rig):
++    first = begin(rig, request="req-old")
++    consumer = rig.consumer_for(3)
++    first = consumer.run(first, result_payload)
++    rig.authority.settle(first.attempt_id, 500, "receipt-old")
++
++    second = begin(rig, page_no=3, request="req-new")
++    assert second.attempt_id != first.attempt_id
++    # lineage 的 epoch 来自上游 generation，不随 M3 attempt 递增；这正是"保留上游身份"
++    assert second.lineage == first.lineage
++    assert second.epoch == first.epoch
++    # 旧 attempt 的 token 还没过期，但已不是 current → STALE_ATTEMPT
++    assert _code(consumer.read_asset, first, first.assets[0]) == "STALE_ATTEMPT"
++
++
++def test_fencing_mismatch_on_tampered_identity(rig):
++    attempt = begin(rig)
++    consumer = rig.consumer_for(3)
++    import dataclasses
++
++    tampered = dataclasses.replace(attempt, identity=dict(attempt.identity, epoch=attempt.epoch + 1))
++    assert _code(consumer.read_asset, tampered, attempt.assets[0]) == "FENCING_MISMATCH"
++
++
++def test_asset_version_binding(rig):
++    attempt = begin(rig)
++    consumer = rig.consumer_for(3)
++    name = attempt.assets[0]
++    assert consumer.read_asset(attempt, name)
++    rig.authority.put_asset("M1", name, b"replaced-after-begin")
++    assert _code(consumer.read_asset, attempt, name) == "ASSET_VERSION"
++
++
++def test_grant_revocation_blocks_new_attempts(rig):
++    rig.authority.grant("M3", "M1", "generate", False)
++    assert _code(begin, rig, page_no=3, request="req-nogrant") == "FORBIDDEN"
++    assert rig.authority.totals()["held"] == 0
++    rig.authority.grant("M3", "M1", "generate")
++    assert begin(rig, page_no=3, request="req-grant-back")
++
++
++def test_image_binding_rejects_non_original_bytes(rig):
++    node = rig.page(3)
++    consumer = rig.consumer_for(3)
++    with pytest.raises(GenerationDenied) as info:
++        consumer.begin(
++            page_id=node.page_id,
++            request_id="req-bad-image",
++            amount=100,
++            c1=node.c1,
++            c2=node.c2,
++            size=SIZE,
++            image=b"not-the-original-image",
++            final_messages=[{"role": "user", "content": "x"}],
++        )
++    assert info.value.m1_code in {"IMAGE_BINDING", "DENIED"}
++
++
++def test_consumer_has_no_billing_surface(rig):
++    consumer = rig.consumer_for(3)
++    assert isinstance(consumer, M1GenerationConsumer)
++    # M3 不持有、也不能调用结算：只有 M1 可信账单适配器可以 settle
++    assert not hasattr(consumer, "settle")
++    assert not hasattr(consumer, "recover")
++    assert not hasattr(consumer, "provision_project")
++    assert not hasattr(consumer, "grant")
++
++
++def test_m3_story_generator_consumes_authorized_inputs(rig):
++    """真实 M3 故事生成器只吃 M1 授权字节，产出 C3 候选并提交。"""
++    import json
++
++    from orchestrator.vendor.member3_v116.agents.generation.m1_story import story_payload
++
++    node = rig.page(3)
++    consumer = rig.consumer_for(3)
++
++    first = consumer.run(begin(rig, request="req-story"), story_payload)
++    assert first.result_sha256 and len(first.result_sha256) == 64
++    rig.authority.settle(first.attempt_id, 700, "receipt-story")
++    assert rig.authority.totals() == {"spent": 700, "held": 0, "available": 14300}
++
++    # 换一个 attempt 复算：结果只取决于授权输入，页面身份与 Segment 必须完整
++    second = begin(rig, page_no=3, request="req-story-check", amount=700)
++    payload = story_payload(consumer.read_inputs(second))
++    doc = json.loads(payload)
++    assert doc["page_id"] == node.page_id
++    assert doc["schema_version"]
++    assert doc["segments"], "故事必须有至少一个 Segment"
++    assert consumer.submit(second, payload).result_sha256
+diff --git a/orchestrator/vendor/member3_v116/tests/test_m1_real_pipeline.py b/orchestrator/vendor/member3_v116/tests/test_m1_real_pipeline.py
+new file mode 100644
+index 0000000..27d4fc8
+--- /dev/null
++++ b/orchestrator/vendor/member3_v116/tests/test_m1_real_pipeline.py
+@@ -0,0 +1,129 @@
++"""真实 M3 业务入口（pipeline.run_page）接入 M1 授权输入的端到端验证。
++
++覆盖：入口调用 consumer、故事生成只消费授权 C1/C2、结果按落盘字节提交、
++无本地 ocr/vlm 也能成功（不存在绕过授权的读盘路径）、失败不提交且释放预留。
++"""
++
++from __future__ import annotations
++
++import hashlib
++import json
++from pathlib import Path
++
++import pytest
++
++from orchestrator.vendor.member3_v116.agents.generation import pipeline as pipeline_module
++from orchestrator.vendor.member3_v116.agents.generation.config import Settings
++from orchestrator.vendor.member3_v116.agents.generation.errors import StoryInputError
++from orchestrator.vendor.member3_v116.agents.generation.m1_pipeline import open_session
++from orchestrator.vendor.member3_v116.agents.generation.pipeline import run_page
++from orchestrator.vendor.member3_v116.tests.m1_offline_rig import make_rig
++
++
++@pytest.fixture
++def rig(tmp_path):
++    return make_rig(tmp_path / "real")
++
++
++def _session(rig, *, request="req-real", amount=1000):
++    node = rig.page(3)
++    consumer = rig.consumer_for(3)
++    session = open_session(
++        consumer,
++        page_id=node.page_id,
++        request_id=request,
++        amount=amount,
++        c1=node.c1,
++        c2=node.c2,
++        size=(96, 128),
++        image=rig.image,
++        final_messages=[{"role": "user", "content": "为这一页生成儿童故事"}],
++    )
++    return node, consumer, session
++
++
++def _settings(tmp_path) -> Settings:
++    data = tmp_path / "products"
++    data.mkdir(parents=True, exist_ok=True)
++    return Settings(data_dir=data)
++
++
++def test_run_page_entry_generates_and_submits(rig, tmp_path):
++    node, consumer, session = _session(rig)
++    settings = _settings(tmp_path)
++    # 运行前 data 目录里没有任何 ocr/vlm 输入文件
++    assert not (settings.data_dir / "json").exists()
++
++    result = run_page(node.page_id, "3-6", settings, make_video=False, m1=session)
++
++    assert result.status in {"done", "partial"}
++    assert result.generation_mode == "m1_authorized"
++    assert result.m1_attempt_id == session.attempt_id
++    story_file = settings.data_dir / "json" / f"{node.page_id}_story.json"
++    assert story_file.is_file()
++    # 提交的是落盘 story.json 的原始字节
++    assert result.m1_result_sha256 == hashlib.sha256(story_file.read_bytes()).hexdigest()
++    # 预留仍在，等待 M1 可信账单结算
++    assert consumer.totals() == {"spent": 0, "held": 1000, "available": 14000}
++    doc = json.loads(story_file.read_bytes())
++    assert doc["page_id"] == node.page_id and doc["segments"]
++
++
++def test_no_bypass_read_of_local_ocr_vlm(rig, tmp_path, monkeypatch):
++    node, consumer, session = _session(rig, request="no-bypass")
++    settings = _settings(tmp_path)
++
++    def forbidden(*args, **kwargs):
++        raise AssertionError("授权模式下不得读取本地 ocr/vlm 输入")
++
++    # builder 只在 ocr/vlm 参数缺失时才会读盘；一旦读盘就说明存在绕过路径
++    monkeypatch.setattr("orchestrator.vendor.member3_v116.agents.generation.story.builder.read_json", forbidden)
++
++    result = run_page(node.page_id, "3-6", settings, make_video=False, m1=session)
++    assert result.status in {"done", "partial"}
++    assert result.m1_result_sha256
++    assert not (settings.data_dir / "json" / f"{node.page_id}_ocr.json").exists()
++    assert not (settings.data_dir / "json" / f"{node.page_id}_vlm.json").exists()
++
++
++def test_without_m1_authorization_the_entry_needs_local_inputs(rig, tmp_path):
++    node, consumer, session = _session(rig, request="legacy-empty")
++    settings = _settings(tmp_path)
++    result = run_page(node.page_id, "3-6", settings, make_video=False)
++    assert result.status == "failed"
++    assert result.m1_result_sha256 is None
++    assert consumer.totals()["held"] == 1000  # 会话尚未释放，仍由调用方负责
++    session.release()
++    assert consumer.totals()["held"] == 0
++
++
++def test_legacy_flow_with_local_files_still_works(rig, tmp_path):
++    node, consumer, session = _session(rig, request="legacy-files")
++    settings = _settings(tmp_path)
++    json_dir = settings.data_dir / "json"
++    json_dir.mkdir(parents=True, exist_ok=True)
++    (json_dir / f"{node.page_id}_ocr.json").write_bytes(node.c1.documents["c1"])
++    (json_dir / f"{node.page_id}_vlm.json").write_bytes(node.c2.documents["c2"])
++
++    result = run_page(node.page_id, "3-6", settings, make_video=False)
++    assert result.status in {"done", "partial"}
++    assert result.generation_mode == "mock_static"
++    assert result.m1_attempt_id is None
++    assert consumer.totals()["held"] == 1000
++    session.release()
++
++
++def test_story_failure_does_not_submit_and_releases(rig, tmp_path, monkeypatch):
++    node, consumer, session = _session(rig, request="fail-release")
++    settings = _settings(tmp_path)
++
++    def boom(*args, **kwargs):
++        raise StoryInputError("模拟故事失败")
++
++    monkeypatch.setattr(pipeline_module, "build_page_story", boom)
++    result = run_page(node.page_id, "3-6", settings, make_video=False, m1=session)
++
++    assert result.status == "failed"
++    assert result.error and result.error["code"] == 3001
++    assert session.submitted is False
++    assert consumer.totals() == {"spent": 0, "held": 0, "available": 15000}
+diff --git a/orchestrator/vendor/member3_v116/tests/test_m1_release_on_failure.py b/orchestrator/vendor/member3_v116/tests/test_m1_release_on_failure.py
+new file mode 100644
+index 0000000..5df4569
+--- /dev/null
++++ b/orchestrator/vendor/member3_v116/tests/test_m1_release_on_failure.py
+@@ -0,0 +1,282 @@
++"""M3-P1-01 / P1-02 / P1-03：失败路径的授权释放与 release 错误上报。
++
++覆盖：Token 撤销、授权读取失败、页身份不一致、故事失败时释放、story.json 读取失败、
++释放失败不被吞掉、重复 release 幂等、已提交的 attempt 不得由 M3 释放。
++"""
++
++from __future__ import annotations
++
++import json
++import sqlite3
++from pathlib import Path
++from types import SimpleNamespace
++
++import pytest
++
++from orchestrator.vendor.member3_v116.agents.generation import pipeline as pipeline_module
++from orchestrator.vendor.member3_v116.agents.generation.config import Settings
++from orchestrator.vendor.member3_v116.agents.generation.errors import AppError, ErrorCode, StoryInputError
++from orchestrator.vendor.member3_v116.agents.generation.m1_generation import GenerationDenied
++from orchestrator.vendor.member3_v116.agents.generation.m1_pipeline import M1ReleaseError, open_session
++from orchestrator.vendor.member3_v116.agents.generation.pipeline import run_page
++from orchestrator.services.integration_reference import Authority
++from orchestrator.services.vision_supervisor.shared import SharedFences
++from orchestrator.vendor.member3_v116.tests.m1_offline_rig import make_rig
++
++
++@pytest.fixture
++def rig(tmp_path):
++    return make_rig(tmp_path / "release")
++
++
++def _session(rig, *, request="req-release", amount=1000, page=3):
++    node = rig.page(page)
++    consumer = rig.consumer_for(page)
++    session = open_session(
++        consumer,
++        page_id=node.page_id,
++        request_id=request,
++        amount=amount,
++        c1=node.c1,
++        c2=node.c2,
++        size=(96, 128),
++        image=rig.image,
++        final_messages=[{"role": "user", "content": "为这一页生成儿童故事"}],
++    )
++    return node, consumer, session
++
++
++def _settings(tmp_path) -> Settings:
++    data = tmp_path / "products"
++    data.mkdir(parents=True, exist_ok=True)
++    return Settings(data_dir=data)
++
++
++def _revoke_upstream(rig, node):
++    other = Authority(
++        rig.db_path, rig.anchor_path, rig.keys, lambda: rig.clock[0], offline_test=True
++    )
++    SharedFences(other).cancel(SharedFences(other).restore(node.page_id))
++
++
++def _requests_count(rig) -> int:
++    with sqlite3.connect(rig.db_path) as db:
++        return db.execute("SELECT count(*) FROM requests").fetchone()[0]
++
++
++def test_token_revoked_releases_and_reports(rig, tmp_path):
++    node, consumer, session = _session(rig, request="revoked")
++    _revoke_upstream(rig, node)
++    assert consumer.totals()["held"] == 0  # 上游撤销已释放预留
++
++    result = run_page(node.page_id, "3-6", _settings(tmp_path), make_video=False, m1=session)
++
++    assert result.status == "failed"
++    assert result.error and result.error["code"] == 1005
++    assert result.budget_release_error is None
++    assert session.released is True
++    assert consumer.totals() == {"spent": 0, "held": 0, "available": 15000}
++    assert _requests_count(rig) == 1  # 没有自动创建新 request_id
++
++
++def test_asset_read_failure_releases_reservation(rig, tmp_path):
++    node, consumer, session = _session(rig, request="asset-version")
++    name = session.attempt.assets[0]
++    rig.authority.put_asset("M1", name, b"replaced-between-begin-and-read")
++
++    result = run_page(node.page_id, "3-6", _settings(tmp_path), make_video=False, m1=session)
++
++    assert result.status == "failed"
++    assert result.error and result.error["code"] == 1005
++    assert "ASSET_VERSION" in result.error["msg"]
++    assert result.budget_release_error is None
++    assert consumer.totals() == {"spent": 0, "held": 0, "available": 15000}
++    assert _requests_count(rig) == 1
++
++
++def test_page_mismatch_releases_reservation(rig, tmp_path):
++    node, consumer, session = _session(rig, request="page-mismatch")
++    other = rig.page(4)
++
++    result = run_page(other.page_id, "3-6", _settings(tmp_path), make_video=False, m1=session)
++
++    assert result.status == "failed"
++    assert result.error and result.error["code"] == 1002
++    assert result.budget_release_error is None
++    assert consumer.totals() == {"spent": 0, "held": 0, "available": 15000}
++    assert _requests_count(rig) == 1
++
++
++def test_story_failure_reports_release_failure(rig, tmp_path, monkeypatch):
++    node, consumer, session = _session(rig, request="release-broken")
++
++    def broken_cancel(attempt):
++        raise GenerationDenied("MAINTENANCE")
++
++    def boom(*args, **kwargs):
++        raise StoryInputError("模拟故事失败")
++
++    monkeypatch.setattr(session.consumer, "cancel", broken_cancel)
++    monkeypatch.setattr(pipeline_module, "build_page_story", boom)
++
++    result = run_page(node.page_id, "3-6", _settings(tmp_path), make_video=False, m1=session)
++
++    assert result.status == "failed"
++    assert result.error and result.error["code"] == 3001
++    assert result.budget_release_error is not None
++    assert result.budget_release_error["m1_code"] == "MAINTENANCE"
++    # 释放失败不得伪装成成功：预算仍被占用
++    assert consumer.totals() == {"spent": 0, "held": 1000, "available": 14000}
++    assert session.release_error == "MAINTENANCE"
++    assert session.released is False
++
++
++@pytest.mark.parametrize("code", ["MAINTENANCE", "CORRUPT", "CLOCK_ROLLBACK"])
++def test_release_surfaces_non_terminal_denials(rig, monkeypatch, code):
++    node, consumer, session = _session(rig, request=f"release-{code.lower()}")
++
++    def broken_cancel(attempt):
++        raise GenerationDenied(code)
++
++    monkeypatch.setattr(session.consumer, "cancel", broken_cancel)
++    with pytest.raises(M1ReleaseError) as info:
++        session.release()
++    assert info.value.m1_code == code
++    assert session.release_error == code
++    assert session.released is False
++
++
++def test_release_is_idempotent_when_already_cancelled(rig):
++    node, consumer, session = _session(rig, request="release-twice")
++    session.release()
++    assert session.released is True
++    session.release()  # 重复释放安全
++    session.release()
++    assert consumer.totals() == {"spent": 0, "held": 0, "available": 15000}
++
++
++def test_release_treats_revoked_token_as_terminal(rig):
++    node, consumer, session = _session(rig, request="release-revoked")
++    _revoke_upstream(rig, node)
++    session.release()
++    assert session.released is True
++    assert session.release_error is None
++    assert consumer.totals()["held"] == 0
++
++
++def test_submitted_attempt_is_never_released(rig, tmp_path):
++    node, consumer, session = _session(rig, request="submitted")
++    story = json.dumps(
++        {"page_id": node.page_id, "segments": [{"scene": "x", "narration": "y"}]},
++        ensure_ascii=False,
++    ).encode()
++    session.submit_story_bytes(story)
++    assert session.submitted is True
++
++    session.release()
++    assert session.released is False
++    assert consumer.totals() == {"spent": 0, "held": 1000, "available": 14000}
++
++
++# ---------------------------------------------------------------- M3-P1-03
++def test_missing_story_file_releases_reserved_budget(rig, tmp_path, monkeypatch):
++    """故事“成功”但 story.json 不存在：读取失败必须释放 RESERVED。"""
++    node, consumer, session = _session(rig, request="story-missing")
++
++    def fake_story(*args, **kwargs):
++        return SimpleNamespace(degraded=[], doc={"page_id": node.page_id})
++
++    monkeypatch.setattr(pipeline_module, "build_page_story", fake_story)
++    settings = _settings(tmp_path)
++    # 确认文件确实不存在（fake_story 不会落盘）
++    assert not (settings.data_dir / "json" / f"{node.page_id}_story.json").exists()
++
++    result = run_page(node.page_id, "3-6", settings, make_video=False, m1=session)
++
++    assert result.status == "failed"
++    assert result.error and result.error["code"] == int(ErrorCode.NOT_FOUND)
++    assert result.budget_release_error is None
++    assert session.released is True
++    assert consumer.totals() == {"spent": 0, "held": 0, "available": 15000}
++    assert _requests_count(rig) == 1
++
++
++def test_story_read_oserror_releases_reserved_budget(rig, tmp_path, monkeypatch):
++    """read_bytes 抛 OSError：仍属于提交前失败，必须释放。"""
++    node, consumer, session = _session(rig, request="story-oserror")
++    settings = _settings(tmp_path)
++    original = Path.read_bytes
++
++    def failing_read(self):
++        if self.name.endswith("_story.json"):
++            raise OSError("simulated disk failure")
++        return original(self)
++
++    monkeypatch.setattr(Path, "read_bytes", failing_read)
++
++    result = run_page(node.page_id, "3-6", settings, make_video=False, m1=session)
++
++    assert result.status == "failed"
++    assert result.error and result.error["code"] == int(ErrorCode.UNAVAILABLE)
++    assert result.budget_release_error is None
++    assert session.released is True
++    assert consumer.totals() == {"spent": 0, "held": 0, "available": 15000}
++    assert _requests_count(rig) == 1
++
++
++def test_story_read_failure_reports_release_failure(rig, tmp_path, monkeypatch):
++    """读取失败且释放也失败：预算占用必须显式暴露。"""
++    node, consumer, session = _session(rig, request="story-read-release-fail")
++
++    def fake_story(*args, **kwargs):
++        return SimpleNamespace(degraded=[], doc={"page_id": node.page_id})
++
++    def broken_cancel(attempt):
++        raise GenerationDenied("CORRUPT")
++
++    monkeypatch.setattr(pipeline_module, "build_page_story", fake_story)
++    monkeypatch.setattr(session.consumer, "cancel", broken_cancel)
++
++    result = run_page(node.page_id, "3-6", _settings(tmp_path), make_video=False, m1=session)
++
++    assert result.status == "failed"
++    assert result.error and result.error["code"] == int(ErrorCode.NOT_FOUND)
++    assert result.budget_release_error is not None
++    assert result.budget_release_error["m1_code"] == "CORRUPT"
++    assert consumer.totals() == {"spent": 0, "held": 1000, "available": 14000}
++    assert session.released is False
++
++
++def test_submit_failure_is_not_treated_as_unsubmitted(rig, tmp_path, monkeypatch):
++    """submit 抛错时不得假定未提交、不得释放可能已进入 UNKNOWN 的预算。"""
++    node, consumer, session = _session(rig, request="submit-failure")
++
++    def broken_submit(payload):
++        raise AppError(ErrorCode.UNAUTHORIZED, "submit rejected", detail="TOKEN_EXPIRED")
++
++    monkeypatch.setattr(session, "submit_story_bytes", broken_submit)
++
++    result = run_page(node.page_id, "3-6", _settings(tmp_path), make_video=False, m1=session)
++
++    assert result.status == "failed"
++    assert result.error and result.error["code"] == int(ErrorCode.UNAUTHORIZED)
++    assert result.budget_release_error is None
++    assert session.released is False
++    assert consumer.totals() == {"spent": 0, "held": 1000, "available": 14000}
++
++
++def test_story_read_does_not_swallow_base_exceptions(rig, tmp_path, monkeypatch):
++    """不得用 BaseException 宽泛捕获掩盖系统错误。"""
++    node, consumer, session = _session(rig, request="story-read-baseexception")
++    original = Path.read_bytes
++
++    def interrupted(self):
++        if self.name.endswith("_story.json"):
++            raise KeyboardInterrupt()
++        return original(self)
++
++    monkeypatch.setattr(Path, "read_bytes", interrupted)
++    with pytest.raises(KeyboardInterrupt):
++        run_page(node.page_id, "3-6", _settings(tmp_path), make_video=False, m1=session)
++    # 未进入释放路径，预算仍被持有，交由调用方/进程恢复处理
++    assert consumer.totals() == {"spent": 0, "held": 1000, "available": 14000}
+diff --git a/orchestrator/vendor/member3_v116/tests/test_m1_shared_fences.py b/orchestrator/vendor/member3_v116/tests/test_m1_shared_fences.py
+new file mode 100644
+index 0000000..b9336d9
+--- /dev/null
++++ b/orchestrator/vendor/member3_v116/tests/test_m1_shared_fences.py
+@@ -0,0 +1,158 @@
++"""SharedFences 共享生命周期验证：双实例、跨实例取消/换代、重启与跨进程。
++
++使用 M1 指定的 `SharedFences(authority)`（不是第一轮的进程内 Fences），
++Generation 与 SharedFences 共享同一个 Authority/SQLite/anchor。
++"""
++
++from __future__ import annotations
++
++import json
++import os
++import subprocess
++import sys
++
++import pytest
++
++from orchestrator.vendor.member3_v116.agents.generation.m1_generation import GenerationDenied
++from orchestrator.services.integration_reference import Authority, OfflineKMS
++from orchestrator.services.vision_supervisor.shared import SharedFences
++from orchestrator.vendor.member3_v116.tests.m1_offline_rig import begin, make_rig, page_id, result_payload
++
++STAGE_OWNER = "m3-offline-fixture"
++
++
++def _other_instance(rig) -> tuple[Authority, SharedFences]:
++    """第二个 M1 实例：同一 SQLite + 同一 anchor + 同一离线密钥根。"""
++    other = Authority(
++        rig.db_path, rig.anchor_path, rig.keys, lambda: rig.clock[0], offline_test=True
++    )
++    return other, SharedFences(other)
++
++
++def _code(fn, *args, **kwargs) -> str:
++    with pytest.raises(GenerationDenied) as info:
++        fn(*args, **kwargs)
++    return info.value.m1_code
++
++
++@pytest.fixture
++def rig(tmp_path):
++    return make_rig(tmp_path / "shared")
++
++
++def test_two_instances_share_the_same_current(rig):
++    attempt = begin(rig, request="shared-begin")
++    node = rig.page(3)
++    other, fences_b = _other_instance(rig)
++    restored = fences_b.restore(node.page_id)
++
++    assert restored is not None
++    assert restored.generation_id == node.identity.generation_id
++    assert restored.epoch == node.identity.epoch
++    assert restored.identity == node.identity
++    # 权威侧快照与 A 的内存视图一致
++    snap = other.vision_snapshot(node.page_id)
++    assert json.loads(snap["lineage"])["generation_id"] == node.identity.generation_id
++    assert json.loads(snap["identity"])["attempt_id"] == node.identity.attempt_id
++    # B 用同一个 request_id 重放：拿到同一 attempt，不新增预留
++    consumer_b = rig.consumer_for(3, service_token=rig.service_token)
++    consumer_b.fences, consumer_b.authority, consumer_b.record = fences_b, other, restored
++    same = consumer_b.begin(
++        page_id=node.page_id,
++        request_id="shared-begin",
++        amount=attempt.amount,
++        c1=node.c1,
++        c2=node.c2,
++        size=(96, 128),
++        image=rig.image,
++        final_messages=[{"role": "user", "content": "为这一页生成儿童故事"}],
++    )
++    assert same.attempt_id == attempt.attempt_id
++    assert rig.authority.totals()["held"] == 1000
++
++
++def test_b_cancel_revokes_a_token_and_submit(rig):
++    attempt = begin(rig, request="cancel-me")
++    node = rig.page(3)
++    other, fences_b = _other_instance(rig)
++    fences_b.cancel(fences_b.restore(node.page_id))
++
++    consumer_a = rig.consumer_for(3)
++    assert _code(consumer_a.read_asset, attempt, attempt.assets[0]) == "TOKEN_REVOKED"
++    assert _code(consumer_a.submit, attempt, result_payload({"c1.json": node.c1.documents["c1"]})) in {
++        "TOKEN_REVOKED",
++        "STALE_ATTEMPT",
++    }
++    # 未提交的预留随上游撤销释放
++    assert rig.authority.totals() == {"spent": 0, "held": 0, "available": 15000}
++
++
++def test_b_replacement_changes_epoch_and_old_attempt_cannot_return(rig):
++    attempt = begin(rig, request="old-generation")
++    node = rig.page(3)
++    other, fences_b = _other_instance(rig)
++    old = fences_b.restore(node.page_id)
++    fences_b.cancel(old)
++    # 旧 stage 必须先由 M1 侧确认终止，才允许换代
++    other.reconcile_stage(node.identity, STAGE_OWNER, outcome="CANCELLED", terminal_confirmed=True)
++    new, created = fences_b.begin("job-replacement", node.page_id, force=True)
++    assert created and new.epoch == old.epoch + 1 and new.generation_id != old.generation_id
++
++    consumer_a = rig.consumer_for(3)
++    assert _code(consumer_a.read_asset, attempt, attempt.assets[0]) == "TOKEN_REVOKED"
++    assert _code(consumer_a.submit, attempt, b"late-result") in {"TOKEN_REVOKED", "STALE_ATTEMPT"}
++    # 旧 request_id 重放不能恢复旧分配（旧 token 已撤销 / 当前 generation 已换代）
++    assert _code(begin, rig, page_no=3, request="old-generation", amount=1000) in {
++        "TOKEN_REVOKED",
++        "STALE_ATTEMPT",
++    }
++    # 旧 generation 也没有把预算占住
++    assert rig.authority.totals()["held"] == 0
++
++
++def test_restart_keeps_current_and_active_token(rig):
++    attempt = begin(rig, request="restart-keep")
++    node = rig.page(3)
++    restarted = rig.reopen()
++    restored = restarted.fences.restore(node.page_id)
++
++    assert restored is not None
++    assert restored.generation_id == node.identity.generation_id
++    assert restored.identity == node.identity
++    snap = restarted.authority.vision_snapshot(node.page_id)
++    assert json.loads(snap["lineage"])["epoch"] == node.identity.epoch
++    # 未取消：旧 token 在重启后仍可用，账本不变
++    consumer = restarted.consumer_for(3)
++    assert consumer.read_asset(attempt, attempt.assets[0])
++    assert restarted.authority.totals() == {"spent": 0, "held": 1000, "available": 14000}
++
++
++def test_cross_process_instance_sees_same_current(rig):
++    node = rig.page(3)
++    script = (
++        "import json,sys\n"
++        "from orchestrator.services.integration_reference import Authority,OfflineKMS\n"
++        "from orchestrator.services.vision_supervisor.shared import SharedFences\n"
++        "path,anchor,page=sys.argv[1],sys.argv[2],sys.argv[3]\n"
++        "a=Authority(path,anchor,OfflineKMS(seed=b'm3-m1-offline-integration-fixture-seed'),lambda:1000,offline_test=True)\n"
++        "f=SharedFences(a);r=f.restore(page)\n"
++        "row=a.vision_snapshot(page)\n"
++        "print(json.dumps({'generation_id':r.generation_id,'epoch':r.epoch,"
++        "'identity':json.loads(row['identity']),'status':row['status']}))\n"
++    )
++    env = dict(os.environ)
++    proc = subprocess.run(
++        [sys.executable, "-c", script, str(rig.db_path), str(rig.anchor_path), node.page_id],
++        capture_output=True,
++        text=True,
++        env=env,
++        timeout=120,
++    )
++    assert proc.returncode == 0, proc.stderr
++    data = json.loads(proc.stdout.strip().splitlines()[-1])
++    assert data["generation_id"] == node.identity.generation_id
++    assert data["epoch"] == node.identity.epoch
++    assert data["identity"]["attempt_id"] == node.identity.attempt_id
++    assert data["status"] == "RUNNING"
++    # 跨进程实例只读当前，不会创建新 generation
++    assert rig.authority.vision_snapshot(node.page_id)["serial"] == node.identity.epoch
+diff --git a/orchestrator/vendor/member3_v116/tests/test_media.py b/orchestrator/vendor/member3_v116/tests/test_media.py
+index a7d1354..bf3f655 100644
+--- a/orchestrator/vendor/member3_v116/tests/test_media.py
++++ b/orchestrator/vendor/member3_v116/tests/test_media.py
+@@ -6,12 +6,12 @@ from pathlib import Path
+ 
+ import pytest
+ 
+-from agents.generation.config import Settings
+-from agents.generation.errors import AppError, ErrorCode, VideoError
+-from agents.generation.media import MediaStatus, probe_audio, probe_video, validate_audio, validate_video
+-from agents.generation.story.builder import build_page_story
+-from agents.generation.tts.client import TTSClient
+-from agents.generation.video import compose_video
++from orchestrator.vendor.member3_v116.agents.generation.config import Settings
++from orchestrator.vendor.member3_v116.agents.generation.errors import AppError, ErrorCode, VideoError
++from orchestrator.vendor.member3_v116.agents.generation.media import MediaStatus, probe_audio, probe_video, validate_audio, validate_video
++from orchestrator.vendor.member3_v116.agents.generation.story.builder import build_page_story
++from orchestrator.vendor.member3_v116.agents.generation.tts.client import TTSClient
++from orchestrator.vendor.member3_v116.agents.generation.video import compose_video
+ 
+ 
+ def test_probe_audio_accepts_generated_mp3(media_settings: Settings):
+diff --git a/orchestrator/vendor/member3_v116/tests/test_pipeline.py b/orchestrator/vendor/member3_v116/tests/test_pipeline.py
+index d14c193..1c95513 100644
+--- a/orchestrator/vendor/member3_v116/tests/test_pipeline.py
++++ b/orchestrator/vendor/member3_v116/tests/test_pipeline.py
+@@ -1,16 +1,16 @@
+ from __future__ import annotations
+ 
+-from agents.generation.config import Settings
+-from agents.generation.pipeline import run_page
+-from agents.generation.schemas import StoryDoc, VideoDoc
+-from agents.generation.tts.client import TTSClient
++from orchestrator.vendor.member3_v116.agents.generation.config import Settings
++from orchestrator.vendor.member3_v116.agents.generation.pipeline import run_page
++from orchestrator.vendor.member3_v116.agents.generation.schemas import StoryDoc, VideoDoc
++from orchestrator.vendor.member3_v116.agents.generation.tts.client import TTSClient
+ 
+ 
+ class FailingEngine:
+     name = "failing"
+ 
+     def synthesize(self, *args, **kwargs):
+-        from agents.generation.errors import TTSFailed
++        from orchestrator.vendor.member3_v116.agents.generation.errors import TTSFailed
+ 
+         raise TTSFailed("合成失败")
+ 
+diff --git a/orchestrator/vendor/member3_v116/tests/test_regressions_v112.py b/orchestrator/vendor/member3_v116/tests/test_regressions_v112.py
+index c762600..f9c290e 100644
+--- a/orchestrator/vendor/member3_v116/tests/test_regressions_v112.py
++++ b/orchestrator/vendor/member3_v116/tests/test_regressions_v112.py
+@@ -10,13 +10,13 @@ from pathlib import Path
+ 
+ import pytest
+ 
+-from agents.generation.config import Settings
+-from agents.generation.errors import AppError, ErrorCode, TTSFailed, VideoError
+-from agents.generation.media import MediaCheck, MediaStatus, probe_audio
+-from agents.generation.story.builder import build_page_story
+-from agents.generation.tts.client import TTSClient
+-from agents.generation.tts.engine import HttpEngine
+-from agents.generation.video import compose_video
++from orchestrator.vendor.member3_v116.agents.generation.config import Settings
++from orchestrator.vendor.member3_v116.agents.generation.errors import AppError, ErrorCode, TTSFailed, VideoError
++from orchestrator.vendor.member3_v116.agents.generation.media import MediaCheck, MediaStatus, probe_audio
++from orchestrator.vendor.member3_v116.agents.generation.story.builder import build_page_story
++from orchestrator.vendor.member3_v116.agents.generation.tts.client import TTSClient
++from orchestrator.vendor.member3_v116.agents.generation.tts.engine import HttpEngine
++from orchestrator.vendor.member3_v116.agents.generation.video import compose_video
+ 
+ 
+ def _story(settings: Settings, ocr: dict, vlm: dict) -> dict:
+@@ -125,7 +125,7 @@ def test_cache_with_wrong_container_is_rebuilt(media_settings: Settings):
+ # ---------- 发布顺序：先验证，后发布 ----------
+ 
+ def test_silent_tts_validates_before_publish(media_settings: Settings, monkeypatch):
+-    from agents.generation.tts import engine as engine_module
++    from orchestrator.vendor.member3_v116.agents.generation.tts import engine as engine_module
+ 
+     monkeypatch.setattr(
+         engine_module,
+@@ -138,7 +138,7 @@ def test_silent_tts_validates_before_publish(media_settings: Settings, monkeypat
+     with pytest.raises(TTSFailed):
+         client.synthesize(text)
+ 
+-    from agents.generation.ids import tts_cache_key
++    from orchestrator.vendor.member3_v116.agents.generation.ids import tts_cache_key
+ 
+     target = media_settings.audios_dir / f"tts_{tts_cache_key(text, 'female_warm', 1.0)}.mp3"
+     assert not target.exists(), "验证失败不能留下正式文件"
+@@ -148,7 +148,7 @@ def test_silent_tts_validates_before_publish(media_settings: Settings, monkeypat
+ def test_video_validates_before_publish(
+     media_settings: Settings, page_image, sample_ocr: dict, sample_vlm: dict, monkeypatch
+ ):
+-    from agents.generation import video as video_module
++    from orchestrator.vendor.member3_v116.agents.generation import video as video_module
+ 
+     story = _story(media_settings, sample_ocr, sample_vlm)
+     monkeypatch.setattr(
+@@ -170,7 +170,7 @@ def test_video_validates_before_publish(
+ def test_http_failure_keeps_existing_valid_audio(media_settings: Settings, monkeypatch):
+     settings = media_settings.replace(tts_engine="http", tts_http_url="http://fake.invalid/tts")
+     text = "旧文件保护测试。"
+-    from agents.generation.ids import tts_cache_key
++    from orchestrator.vendor.member3_v116.agents.generation.ids import tts_cache_key
+ 
+     target = settings.audios_dir / f"tts_{tts_cache_key(text, 'female_warm', 1.0)}.mp3"
+     good = TTSClient(media_settings).synthesize("旧文件保护素材。").audio_path.read_bytes()
+diff --git a/orchestrator/vendor/member3_v116/tests/test_regressions_v113.py b/orchestrator/vendor/member3_v116/tests/test_regressions_v113.py
+index 39879ed..aa54313 100644
+--- a/orchestrator/vendor/member3_v116/tests/test_regressions_v113.py
++++ b/orchestrator/vendor/member3_v116/tests/test_regressions_v113.py
+@@ -8,15 +8,15 @@ from pathlib import Path
+ 
+ import pytest
+ 
+-from agents.generation.config import Settings
+-from agents.generation.errors import AppError, ErrorCode, TTSFailed, TTSUnavailable, VideoError
+-from agents.generation.media import AudioProbe
++from orchestrator.vendor.member3_v116.agents.generation.config import Settings
++from orchestrator.vendor.member3_v116.agents.generation.errors import AppError, ErrorCode, TTSFailed, TTSUnavailable, VideoError
++from orchestrator.vendor.member3_v116.agents.generation.media import AudioProbe
+ from pydantic import ValidationError
+ 
+-from agents.generation.schemas import StoryDoc, VideoDoc
+-from agents.generation.story.builder import build_page_story
+-from agents.generation.tts.engine import HttpEngine
+-from agents.generation.video import compose_video
++from orchestrator.vendor.member3_v116.agents.generation.schemas import StoryDoc, VideoDoc
++from orchestrator.vendor.member3_v116.agents.generation.story.builder import build_page_story
++from orchestrator.vendor.member3_v116.agents.generation.tts.engine import HttpEngine
++from orchestrator.vendor.member3_v116.agents.generation.video import compose_video
+ 
+ 
+ class FakeResponse:
+@@ -130,7 +130,7 @@ def test_tts_safety_error_propagates_not_degraded(
+ def test_pipeline_video_safety_is_blocked(
+     media_settings: Settings, page_image, sample_ocr: dict, sample_vlm: dict, monkeypatch
+ ):
+-    from agents.generation import pipeline
++    from orchestrator.vendor.member3_v116.agents.generation import pipeline
+ 
+     def boom(*args, **kwargs):
+         raise AppError(ErrorCode.SAFETY_BLOCKED, "视频阶段安全拒绝")
+@@ -165,7 +165,7 @@ def _debris(settings: Settings) -> list[str]:
+ def test_video_json_publish_failure_restores_old_pair(
+     media_settings: Settings, page_image, sample_ocr: dict, sample_vlm: dict, monkeypatch
+ ):
+-    import agents.generation.video as video_module
++    import orchestrator.vendor.member3_v116.agents.generation.video as video_module
+ 
+     story = _story(media_settings, sample_ocr, sample_vlm)
+     first = _compose_once(media_settings, story, page_image)
+@@ -194,7 +194,7 @@ def test_video_json_publish_failure_restores_old_pair(
+ def test_video_failure_without_old_pair_leaves_nothing(
+     media_settings: Settings, page_image, sample_ocr: dict, sample_vlm: dict, monkeypatch
+ ):
+-    import agents.generation.video as video_module
++    import orchestrator.vendor.member3_v116.agents.generation.video as video_module
+ 
+     story = _story(media_settings, sample_ocr, sample_vlm)
+     real_replace = video_module.os.replace
+diff --git a/orchestrator/vendor/member3_v116/tests/test_regressions_v114.py b/orchestrator/vendor/member3_v116/tests/test_regressions_v114.py
+index 63fc912..704d924 100644
+--- a/orchestrator/vendor/member3_v116/tests/test_regressions_v114.py
++++ b/orchestrator/vendor/member3_v116/tests/test_regressions_v114.py
+@@ -9,12 +9,12 @@ from pathlib import Path
+ 
+ import pytest
+ 
+-from agents.generation.config import Settings
+-from agents.generation.errors import TTSFailed, VideoPublishError
+-from agents.generation.storage import PageFiles
+-from agents.generation.tts.client import TTSClient
+-from agents.generation.tts.engine import HttpEngine
+-from agents.generation.video import _publish_pair
++from orchestrator.vendor.member3_v116.agents.generation.config import Settings
++from orchestrator.vendor.member3_v116.agents.generation.errors import TTSFailed, VideoPublishError
++from orchestrator.vendor.member3_v116.agents.generation.storage import PageFiles
++from orchestrator.vendor.member3_v116.agents.generation.tts.client import TTSClient
++from orchestrator.vendor.member3_v116.agents.generation.tts.engine import HttpEngine
++from orchestrator.vendor.member3_v116.agents.generation.video import _publish_pair
+ 
+ 
+ def _files(settings: Settings) -> PageFiles:
+@@ -67,7 +67,7 @@ def test_backup_cleanup_failure_does_not_rollback(media_settings: Settings, monk
+ 
+ def test_rollback_failure_keeps_recovery_backup(media_settings: Settings, monkeypatch):
+     """F02：回滚恢复失败时保留备份，并报明确的 VideoPublishError。"""
+-    import agents.generation.video as video_module
++    import orchestrator.vendor.member3_v116.agents.generation.video as video_module
+ 
+     files = _files(media_settings)
+     _seed_old(files)
+@@ -101,7 +101,7 @@ def test_rollback_failure_keeps_recovery_backup(media_settings: Settings, monkey
+ 
+ def test_rollback_lock_blocks_other_publisher(media_settings: Settings, monkeypatch):
+     """F03：A 失败回滚期间 B 不能插入；回滚结束后 B 发布的结果不能被 A 覆盖。"""
+-    import agents.generation.video as video_module
++    import orchestrator.vendor.member3_v116.agents.generation.video as video_module
+ 
+     files = _files(media_settings)
+     _seed_old(files)
+diff --git a/orchestrator/vendor/member3_v116/tests/test_regressions_v115.py b/orchestrator/vendor/member3_v116/tests/test_regressions_v115.py
+index 36c3f55..b1ccd11 100644
+--- a/orchestrator/vendor/member3_v116/tests/test_regressions_v115.py
++++ b/orchestrator/vendor/member3_v116/tests/test_regressions_v115.py
+@@ -6,10 +6,10 @@ import json
+ 
+ import pytest
+ 
+-from agents.generation.config import Settings
+-from agents.generation.errors import VideoPublishError
+-from agents.generation.story.builder import build_page_story
+-from agents.generation.video import compose_video
++from orchestrator.vendor.member3_v116.agents.generation.config import Settings
++from orchestrator.vendor.member3_v116.agents.generation.errors import VideoPublishError
++from orchestrator.vendor.member3_v116.agents.generation.story.builder import build_page_story
++from orchestrator.vendor.member3_v116.agents.generation.video import compose_video
+ 
+ 
+ def _story(settings: Settings, ocr: dict, vlm: dict) -> dict:
+@@ -26,7 +26,7 @@ def test_compose_does_not_retry_publish_error(
+     media_settings: Settings, page_image, sample_ocr: dict, sample_vlm: dict, monkeypatch
+ ):
+     """RT-01：需要人工恢复的发布错误只能尝试一次，不能自动重试覆盖备份。"""
+-    import agents.generation.video as video_module
++    import orchestrator.vendor.member3_v116.agents.generation.video as video_module
+ 
+     story = _story(media_settings, sample_ocr, sample_vlm)
+     calls = {"n": 0}
+@@ -51,7 +51,7 @@ def test_pipeline_records_recovery_diagnostics(
+     media_settings: Settings, page_image, sample_ocr: dict, sample_vlm: dict, monkeypatch, caplog
+ ):
+     """RT-02：pipeline 要把恢复详情写进内部日志，公共响应不泄漏路径。"""
+-    import agents.generation.pipeline as pipeline
++    import orchestrator.vendor.member3_v116.agents.generation.pipeline as pipeline
+ 
+     def boom(*args, **kwargs):
+         raise VideoPublishError(
+diff --git a/orchestrator/vendor/member3_v116/tests/test_regressions_v116.py b/orchestrator/vendor/member3_v116/tests/test_regressions_v116.py
+index e4de7b0..e0b2a65 100644
+--- a/orchestrator/vendor/member3_v116/tests/test_regressions_v116.py
++++ b/orchestrator/vendor/member3_v116/tests/test_regressions_v116.py
+@@ -5,15 +5,15 @@ from __future__ import annotations
+ import json
+ from pathlib import Path
+ 
+-from agents.generation.config import Settings
+-from agents.generation.errors import VideoPublishError
+-from agents.generation.pipeline import run_page
++from orchestrator.vendor.member3_v116.agents.generation.config import Settings
++from orchestrator.vendor.member3_v116.agents.generation.errors import VideoPublishError
++from orchestrator.vendor.member3_v116.agents.generation.pipeline import run_page
+ 
+ MARKER = "MOCK_RECOVERY_BACKUP_PATH=C:/tmp/book01_p03_video.mp4.bak.1"
+ 
+ 
+ def _inject_publish_error(monkeypatch):
+-    import agents.generation.pipeline as pipeline
++    import orchestrator.vendor.member3_v116.agents.generation.pipeline as pipeline
+ 
+     def boom(*args, **kwargs):
+         raise VideoPublishError(
+diff --git a/orchestrator/vendor/member3_v116/tests/test_safety_entrypoints.py b/orchestrator/vendor/member3_v116/tests/test_safety_entrypoints.py
+index 6490d09..9d82735 100644
+--- a/orchestrator/vendor/member3_v116/tests/test_safety_entrypoints.py
++++ b/orchestrator/vendor/member3_v116/tests/test_safety_entrypoints.py
+@@ -7,14 +7,14 @@ import json
+ 
+ import pytest
+ 
+-from agents.generation.config import Settings
+-from agents.generation.errors import AppError, ErrorCode
+-from agents.generation.story.builder import build_page_story
+-from agents.generation.storage import PageFiles
+-from agents.generation.tts.api import TTSRequest, synthesize_tts
+-from agents.generation.tts.client import TTSClient
+-from agents.generation.tts.service import create_app
+-from agents.generation.video import compose_video
++from orchestrator.vendor.member3_v116.agents.generation.config import Settings
++from orchestrator.vendor.member3_v116.agents.generation.errors import AppError, ErrorCode
++from orchestrator.vendor.member3_v116.agents.generation.story.builder import build_page_story
++from orchestrator.vendor.member3_v116.agents.generation.storage import PageFiles
++from orchestrator.vendor.member3_v116.agents.generation.tts.api import TTSRequest, synthesize_tts
++from orchestrator.vendor.member3_v116.agents.generation.tts.client import TTSClient
++from orchestrator.vendor.member3_v116.agents.generation.tts.service import create_app
++from orchestrator.vendor.member3_v116.agents.generation.video import compose_video
+ 
+ BLOCKED_TERM = "打架"
+ 
+diff --git a/orchestrator/vendor/member3_v116/tests/test_schemas.py b/orchestrator/vendor/member3_v116/tests/test_schemas.py
+index 6644623..818d8fd 100644
+--- a/orchestrator/vendor/member3_v116/tests/test_schemas.py
++++ b/orchestrator/vendor/member3_v116/tests/test_schemas.py
+@@ -5,7 +5,7 @@ import json
+ import pytest
+ from pydantic import ValidationError
+ 
+-from agents.generation.schemas import StoryDoc, VideoDoc, export_json_schemas
++from orchestrator.vendor.member3_v116.agents.generation.schemas import StoryDoc, VideoDoc, export_json_schemas
+ 
+ 
+ def _story(**overrides) -> dict:
+diff --git a/orchestrator/vendor/member3_v116/tests/test_story.py b/orchestrator/vendor/member3_v116/tests/test_story.py
+index d37435a..cebd95e 100644
+--- a/orchestrator/vendor/member3_v116/tests/test_story.py
++++ b/orchestrator/vendor/member3_v116/tests/test_story.py
+@@ -4,19 +4,19 @@ from pathlib import Path
+ 
+ import pytest
+ 
+-from agents.generation.config import Settings
+-from agents.generation.errors import AppError, ErrorCode, StoryInputError
+-from agents.generation.schemas import StoryDoc
+-from agents.generation.story.builder import build_page_story
+-from agents.generation.tts.client import TTSClient
+-from agents.generation.tts.engine import estimate_duration_sec
++from orchestrator.vendor.member3_v116.agents.generation.config import Settings
++from orchestrator.vendor.member3_v116.agents.generation.errors import AppError, ErrorCode, StoryInputError
++from orchestrator.vendor.member3_v116.agents.generation.schemas import StoryDoc
++from orchestrator.vendor.member3_v116.agents.generation.story.builder import build_page_story
++from orchestrator.vendor.member3_v116.agents.generation.tts.client import TTSClient
++from orchestrator.vendor.member3_v116.agents.generation.tts.engine import estimate_duration_sec
+ 
+ 
+ class FailingEngine:
+     name = "failing"
+ 
+     def synthesize(self, *args, **kwargs):
+-        from agents.generation.errors import TTSFailed
++        from orchestrator.vendor.member3_v116.agents.generation.errors import TTSFailed
+ 
+         raise TTSFailed("合成失败")
+ 
+@@ -174,7 +174,7 @@ def test_scene_filled_when_vlm_has_no_description(
+ def test_post_generation_safety_blocks_unsafe_story(
+     media_settings: Settings, sample_ocr: dict, sample_vlm: dict, monkeypatch
+ ):
+-    from agents.generation.story.draft import DraftSegment, StoryDraft
++    from orchestrator.vendor.member3_v116.agents.generation.story.draft import DraftSegment, StoryDraft
+ 
+     def fake_draft(state, age_level, settings):
+         return StoryDraft(
+@@ -183,7 +183,7 @@ def test_post_generation_safety_blocks_unsafe_story(
+             model_name="fake-model",
+         )
+ 
+-    monkeypatch.setattr("agents.generation.story.builder.generate_draft", fake_draft)
++    monkeypatch.setattr("orchestrator.vendor.member3_v116.agents.generation.story.builder.generate_draft", fake_draft)
+     settings = media_settings.replace(safety_enabled=True, safety_blocklist=("打架",))
+ 
+     with pytest.raises(AppError) as info:
+diff --git a/orchestrator/vendor/member3_v116/tests/test_story_schema_contract.py b/orchestrator/vendor/member3_v116/tests/test_story_schema_contract.py
+index 1c6b0e2..12f6a7a 100644
+--- a/orchestrator/vendor/member3_v116/tests/test_story_schema_contract.py
++++ b/orchestrator/vendor/member3_v116/tests/test_story_schema_contract.py
+@@ -8,7 +8,7 @@ from pathlib import Path
+ import pytest
+ from pydantic import ValidationError
+ 
+-from agents.generation.schemas import StoryDoc, export_json_schemas
++from orchestrator.vendor.member3_v116.agents.generation.schemas import StoryDoc, export_json_schemas
+ 
+ ROOT = Path(__file__).resolve().parents[1]
+ 
+diff --git a/orchestrator/vendor/member3_v116/tests/test_tts.py b/orchestrator/vendor/member3_v116/tests/test_tts.py
+index 47d6327..c1b4e3f 100644
+--- a/orchestrator/vendor/member3_v116/tests/test_tts.py
++++ b/orchestrator/vendor/member3_v116/tests/test_tts.py
+@@ -7,12 +7,12 @@ from pathlib import Path
+ import pytest
+ from fastapi import FastAPI
+ 
+-from agents.generation.config import Settings
+-from agents.generation.errors import AppError, ErrorCode, TTSFailed, TTSUnavailable
+-from agents.generation.tts.api import TTSRequest, synthesize_tts
+-from agents.generation.tts.client import TTSClient
+-from agents.generation.tts.engine import estimate_duration_sec
+-from agents.generation.tts.service import create_app
++from orchestrator.vendor.member3_v116.agents.generation.config import Settings
++from orchestrator.vendor.member3_v116.agents.generation.errors import AppError, ErrorCode, TTSFailed, TTSUnavailable
++from orchestrator.vendor.member3_v116.agents.generation.tts.api import TTSRequest, synthesize_tts
++from orchestrator.vendor.member3_v116.agents.generation.tts.client import TTSClient
++from orchestrator.vendor.member3_v116.agents.generation.tts.engine import estimate_duration_sec
++from orchestrator.vendor.member3_v116.agents.generation.tts.service import create_app
+ 
+ 
+ class FailingEngine:
+diff --git a/orchestrator/vendor/member3_v116/tests/test_tts_service.py b/orchestrator/vendor/member3_v116/tests/test_tts_service.py
+index 825c9f3..e6b9e24 100644
+--- a/orchestrator/vendor/member3_v116/tests/test_tts_service.py
++++ b/orchestrator/vendor/member3_v116/tests/test_tts_service.py
+@@ -5,7 +5,7 @@ from __future__ import annotations
+ import asyncio
+ import json
+ 
+-from agents.generation.tts.service import handle_unexpected, handle_validation_error
++from orchestrator.vendor.member3_v116.agents.generation.tts.service import handle_unexpected, handle_validation_error
+ 
+ 
+ def _run(handler) -> tuple[int, dict]:
+diff --git a/orchestrator/vendor/member3_v116/tests/test_video.py b/orchestrator/vendor/member3_v116/tests/test_video.py
+index 63f0794..49858cd 100644
+--- a/orchestrator/vendor/member3_v116/tests/test_video.py
++++ b/orchestrator/vendor/member3_v116/tests/test_video.py
+@@ -2,12 +2,12 @@ from __future__ import annotations
+ 
+ import pytest
+ 
+-from agents.generation.config import Settings
+-from agents.generation.errors import VideoError
+-from agents.generation.media import probe_video
+-from agents.generation.schemas import VideoDoc
+-from agents.generation.story.builder import build_page_story
+-from agents.generation.video import compose_video
++from orchestrator.vendor.member3_v116.agents.generation.config import Settings
++from orchestrator.vendor.member3_v116.agents.generation.errors import VideoError
++from orchestrator.vendor.member3_v116.agents.generation.media import probe_video
++from orchestrator.vendor.member3_v116.agents.generation.schemas import VideoDoc
++from orchestrator.vendor.member3_v116.agents.generation.story.builder import build_page_story
++from orchestrator.vendor.member3_v116.agents.generation.video import compose_video
+ 
+ 
+ def _build_story(settings: Settings, ocr: dict, vlm: dict) -> dict:
+@@ -79,7 +79,7 @@ def test_retry_once_then_fail(media_settings: Settings, page_image, monkeypatch,
+         calls["n"] += 1
+         raise VideoError("故意失败")
+ 
+-    monkeypatch.setattr("agents.generation.video._render_once", boom)
++    monkeypatch.setattr("orchestrator.vendor.member3_v116.agents.generation.video._render_once", boom)
+     with pytest.raises(VideoError):
+         compose_video("book01_p03", story, settings)
+     assert calls["n"] == 2, "契约要求 Video 重试 1 次"
+@@ -92,7 +92,7 @@ def test_video_json_not_written_on_failure(media_settings: Settings, monkeypatch
+     def boom(*args, **kwargs):
+         raise VideoError("故意失败")
+ 
+-    monkeypatch.setattr("agents.generation.video._render_once", boom)
++    monkeypatch.setattr("orchestrator.vendor.member3_v116.agents.generation.video._render_once", boom)
+     with pytest.raises(VideoError):
+         compose_video("book01_p03", story, settings)
+     assert not (settings.json_dir / "book01_p03_video.json").is_file()

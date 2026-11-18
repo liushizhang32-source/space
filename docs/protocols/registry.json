@@ -1,0 +1,37 @@
+[
+  {
+    "id": "P1",
+    "file": "M1_BILLING_AND_RECONCILIATION_PROTOCOL.md",
+    "version": "1.0",
+    "status": "PROPOSED",
+    "clauses": 18
+  },
+  {
+    "id": "P2",
+    "file": "M1_ASSET_AUTHORIZATION_PROTOCOL.md",
+    "version": "1.0",
+    "status": "PROPOSED",
+    "clauses": 19
+  },
+  {
+    "id": "P3",
+    "file": "M1_M2_M3_RUNTIME_INTEGRATION_PROTOCOL.md",
+    "version": "1.0",
+    "status": "PROPOSED",
+    "clauses": 20
+  },
+  {
+    "id": "P4",
+    "file": "M1_M2_M3_GOVERNANCE_AND_ACCEPTANCE_PROTOCOL.md",
+    "version": "1.0",
+    "status": "PROPOSED",
+    "clauses": 14
+  },
+  {
+    "id": "P5",
+    "file": "M1_LOCAL_CLOUD_WORKFLOW_PROTOCOL.md",
+    "version": "1.0",
+    "status": "PROPOSED",
+    "clauses": 16
+  }
+]

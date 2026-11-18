@@ -1,0 +1,32 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>纸书智伴 · 绘本工作室</title><link rel="stylesheet" href="/style.css"></head><body>
+<header><div class="mark">纸</div><div><h1>纸书智伴</h1><p>把一本绘本，变成可以听、可以看的故事。</p></div><span class="badge">本地工作室 · 真实云端调用待验证</span></header>
+<main><div id="notice" role="status" aria-live="polite">正在连接本地系统…</div>
+<section><div class="section-title"><span>01</span><h2>连接你的模型</h2><strong id="budget">预算读取中</strong></div>
+<p class="muted">全项目预算上限 ¥150。Key 仅由本机后端内存持有，退出后需重新输入。连接检查不生成内容、不验证各模型的收费权限。</p>
+<form id="settings"><div class="grid"><label class="wide">百炼 API Key<input id="apiKey" type="password" autocomplete="off" placeholder="输入 DASHSCOPE_API_KEY；已有 Key 时留空保留"></label>
+<label>地域<select id="region"><option value="cn-beijing">华北2 · 北京（完整链路）</option><option value="ap-southeast-1">新加坡（须额外验证，暂不计费）</option></select></label>
+<label>业务空间 ID（选填）<input id="workspace" placeholder="留空使用官方共享域名"></label>
+<label>视觉模型<input id="vlm_model"></label><label>故事模型<input id="llm_model"></label><label>问答模型<input id="agent_model"></label><label>语音模型<input id="tts_model"></label><label>视频模型<input id="wan_model"></label>
+<label>默认音色<select id="tts_voice"><option value="longyan_v3">龙颜 · 温暖春风成年女声</option><option value="longanhuan">龙安欢 · 元气成年女声</option></select></label>
+<label>语速<input id="speech_rate" type="number" step="0.05" min="0.5" max="2" value="0.9"></label>
+<label>视频清晰度<select id="resolution"><option>720P</option><option>1080P</option></select></label>
+<label>每页分镜上限<select id="shots_per_page"><option value="1">1段（适合较长绘本）</option><option value="2" selected>2段（默认）</option><option value="3">3段</option><option value="4">4段</option></select></label>
+<label>请求超时（秒）<input id="request_timeout" type="number" min="5" max="180"></label><label>视频等待上限（秒）<input id="video_timeout" type="number" min="60" max="7200"></label>
+<label>查询重试次数<input id="get_retries" type="number" min="0" max="3"></label><label>Base URL<input id="baseUrl" readonly></label></div>
+<div class="actions"><button type="submit">保存配置</button><button id="connections" type="button" class="secondary">检查连接（不计费）</button><span id="modelStatus"></span></div></form><pre id="environment"></pre></section>
+<section><div class="section-title"><span>02</span><h2>上传你的绘本</h2></div>
+<label class="upload" for="files"><b>选择绘本图片或 PDF</b><span>支持 JPG / JPEG / PNG / PDF，多张图片按选择顺序导入，随后可排序。</span><input id="files" type="file" accept="image/jpeg,image/png,application/pdf" multiple></label>
+<p class="muted">单文件 ≤20MB，整本最多30页。预览、OCR 与后期合成在本机运行；生成时，页面图片、OCR文字、故事上下文和配音文本将发送到你所选地域的阿里云百炼。不会公开本机目录。</p>
+<div id="pages" class="pages"></div><div class="grid"><label>绘本名称<input id="bookTitle" maxlength="100" placeholder="为这本故事起个名字"></label><label>适用年龄<select id="age"><option value="3-6">3—6岁</option><option value="6-9">6—9岁（含7—8岁）</option></select></label></div>
+<div class="actions"><button id="quote" class="secondary">估算本次费用</button><strong id="estimate"></strong></div>
+<div id="approval" hidden><label>本次费用上限（元）<input id="costCap" type="number" step="0.01" min="0.01" max="150"></label>
+<label class="check"><input id="consent" type="checkbox">我同意把上述素材发送至百炼，并确认本次费用上限。</label>
+<label class="check"><input id="permissions" type="checkbox">我已在百炼控制台核实账户地域、模型权限和当前价格。</label>
+<p class="muted">估算按公开价格保守预留，不代表实际账单。若无法取得可信结算证据，费用显示“待对账”，相应预算继续保留。收费提交不自动重试。</p>
+<button id="generate">生成动态绘本</button></div></section>
+<section><div class="section-title"><span>03</span><h2>你的故事正在发生</h2><button id="refreshJobs" class="secondary">历史任务 / 断点恢复</button></div>
+<div id="history"></div><div id="progressBox"><p id="stage">等待上传绘本</p><progress id="progress" max="100" value="0"></progress><button id="cancel" class="secondary" disabled>取消任务</button></div>
+<div id="results" hidden><h3 id="resultTitle"></h3><p id="timing"></p><video id="video" controls playsinline preload="metadata"></video><audio id="audio" controls preload="metadata"></audio><div class="actions"><a id="downloadVideo" download="绘本.mp4">下载完整 MP4</a><a id="downloadSrt" download="绘本字幕.srt">下载字幕 SRT</a></div><div id="story"></div></div></section>
+<section><div class="section-title"><span>04</span><h2>和故事聊一聊</h2></div><p class="muted">以已生成绘本和当前页面为上下文。问答与语音回复也会计费，需单独确认费用；联网搜索默认关闭。</p><div class="grid"><label>当前页面<input id="questionPage" type="number" min="1" value="1"></label><label>本轮问答费用上限（元）<input id="qaCap" type="number" min="1" max="150" step="0.01" value="1"></label></div>
+<textarea id="question" rows="3" placeholder="例如：小兔子为什么帮助朋友？"></textarea><label class="check"><input id="qaConsent" type="checkbox">同意发送问题、录音（如有）、绘本上下文，并确认本轮费用上限。</label><div class="actions"><button id="ask">提问并播放回答</button><button id="record" class="secondary">语音提问</button></div><div id="answer" aria-live="polite"></div><audio id="answerAudio" controls hidden></audio></section>
+</main><footer>图片与产物由 M1 统一授权 · PaddleOCR / OpenCV / FFmpeg 本地运行 · Qwen / CosyVoice / Wan 按确认调用 · PRODUCTION_READY=NO</footer><script src="/app.js"></script></body></html>

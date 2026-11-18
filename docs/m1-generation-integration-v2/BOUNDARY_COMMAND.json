@@ -1,0 +1,26 @@
+{
+  "command": [
+    "C:\\Users\\16173\\Documents\\ChatGPT\\\u4eba\u5de5\u667a\u80fd+\\reports\\M1-M3-RUNTIME-001\\test-env\\Scripts\\python.exe",
+    "-B",
+    "-m",
+    "pytest",
+    "-c",
+    "C:\\Users\\16173\\Documents\\ChatGPT\\\u4eba\u5de5\u667a\u80fd+\\reports\\M1-M3-IMPLEMENTATION-001\\ci-only-boundary\\pytest.ini",
+    "orchestrator/tests/test_m1_integration_reference.py",
+    "-o",
+    "addopts=",
+    "-p",
+    "no:cacheprovider",
+    "-v",
+    "--tb=short",
+    "--basetemp",
+    "C:\\Users\\16173\\Documents\\ChatGPT\\\u4eba\u5de5\u667a\u80fd+\\reports\\M1-M3-IMPLEMENTATION-001\\tmp-boundary",
+    "--junitxml",
+    "C:\\Users\\16173\\Documents\\ChatGPT\\\u4eba\u5de5\u667a\u80fd+\\reports\\M1-M3-IMPLEMENTATION-001\\BOUNDARY_RESULTS.xml"
+  ],
+  "cwd": "C:\\Users\\16173\\Documents\\ChatGPT\\\u4eba\u5de5\u667a\u80fd+\\reports\\M1-M3-IMPLEMENTATION-001\\ci-only-boundary",
+  "exit": 1,
+  "seconds": 26.656999999890104,
+  "status": "CI_ONLY",
+  "network": "external blocked; loopback only"
+}

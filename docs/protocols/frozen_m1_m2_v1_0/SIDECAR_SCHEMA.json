@@ -1,0 +1,192 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:m1-m2:offline:1.0:sidecar",
+  "$comment": "M1_M2_OFFLINE_PROTOCOL_V1.0 FROZEN OWNER_APPROVED; context requirements are normative in FIELD_CONTRACT and protocol documents.",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "vision_refs/0.1"
+    },
+    "job_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "page_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generation_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "input_revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "epoch": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "attempt_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "fencing_token": {
+      "type": "string",
+      "minLength": 1
+    },
+    "c2": {
+      "type": "object",
+      "properties": {
+        "asset_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "schema_version": {
+          "const": "1.0"
+        },
+        "relative_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "asset_id",
+        "schema_version",
+        "relative_path",
+        "sha256"
+      ],
+      "additionalProperties": false
+    },
+    "source": {
+      "type": "object",
+      "properties": {
+        "component_mode": {
+          "enum": [
+            "fixture",
+            "stub"
+          ]
+        },
+        "model_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "prompt_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "evidence_ref": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "component_mode",
+        "model_ref",
+        "prompt_sha256",
+        "evidence_ref"
+      ],
+      "additionalProperties": false
+    },
+    "observations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "observation_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "object_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "identity_status": {
+            "enum": [
+              "unknown",
+              "ambiguous"
+            ]
+          },
+          "visual_description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_ref": {
+            "type": "string",
+            "minLength": 1
+          },
+          "appearance": {
+            "type": "object",
+            "properties": {
+              "clothing": {
+                "type": "string",
+                "minLength": 1
+              },
+              "visible_features": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [],
+            "additionalProperties": false
+          },
+          "confidence": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "unavailable",
+                  "model_estimate"
+                ]
+              },
+              "calibrated": {
+                "type": "boolean"
+              },
+              "value": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "calibrated"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "observation_id",
+          "object_id",
+          "identity_status",
+          "visual_description",
+          "source_ref",
+          "appearance",
+          "confidence"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "job_id",
+    "page_id",
+    "generation_id",
+    "input_revision",
+    "epoch",
+    "attempt_id",
+    "fencing_token",
+    "c2",
+    "source",
+    "observations"
+  ],
+  "additionalProperties": false
+}

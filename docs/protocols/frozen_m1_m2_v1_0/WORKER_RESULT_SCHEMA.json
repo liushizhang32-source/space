@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:m1-m2:offline:1.0:result",
+  "$comment": "M1_M2_OFFLINE_PROTOCOL_V1.0 FROZEN OWNER_APPROVED; context requirements are normative in FIELD_CONTRACT and protocol documents.",
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "const": "m1-vision-worker/0.1"
+    },
+    "identity": {
+      "type": "object",
+      "properties": {
+        "job_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "page_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "generation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "input_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "epoch": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "attempt_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fencing_token": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "job_id",
+        "page_id",
+        "generation_id",
+        "input_revision",
+        "epoch",
+        "attempt_id",
+        "fencing_token"
+      ],
+      "additionalProperties": false
+    },
+    "code": {
+      "type": "integer"
+    },
+    "msg": {
+      "type": "string"
+    },
+    "artifacts": {
+      "type": "object",
+      "properties": {
+        "c1": {
+          "type": "string",
+          "minLength": 1
+        },
+        "c2": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sidecar": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "transient": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "protocol",
+    "identity",
+    "code",
+    "msg",
+    "artifacts"
+  ],
+  "additionalProperties": false
+}

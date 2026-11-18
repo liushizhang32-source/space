@@ -6,10 +6,10 @@ import json
 
 import pytest
 
-from agents.generation.config import Settings
-from agents.generation.errors import VideoPublishError
-from agents.generation.story.builder import build_page_story
-from agents.generation.video import compose_video
+from orchestrator.vendor.member3_v116.agents.generation.config import Settings
+from orchestrator.vendor.member3_v116.agents.generation.errors import VideoPublishError
+from orchestrator.vendor.member3_v116.agents.generation.story.builder import build_page_story
+from orchestrator.vendor.member3_v116.agents.generation.video import compose_video
 
 
 def _story(settings: Settings, ocr: dict, vlm: dict) -> dict:
@@ -26,7 +26,7 @@ def test_compose_does_not_retry_publish_error(
     media_settings: Settings, page_image, sample_ocr: dict, sample_vlm: dict, monkeypatch
 ):
     """RT-01：需要人工恢复的发布错误只能尝试一次，不能自动重试覆盖备份。"""
-    import agents.generation.video as video_module
+    import orchestrator.vendor.member3_v116.agents.generation.video as video_module
 
     story = _story(media_settings, sample_ocr, sample_vlm)
     calls = {"n": 0}
@@ -51,7 +51,7 @@ def test_pipeline_records_recovery_diagnostics(
     media_settings: Settings, page_image, sample_ocr: dict, sample_vlm: dict, monkeypatch, caplog
 ):
     """RT-02：pipeline 要把恢复详情写进内部日志，公共响应不泄漏路径。"""
-    import agents.generation.pipeline as pipeline
+    import orchestrator.vendor.member3_v116.agents.generation.pipeline as pipeline
 
     def boom(*args, **kwargs):
         raise VideoPublishError(

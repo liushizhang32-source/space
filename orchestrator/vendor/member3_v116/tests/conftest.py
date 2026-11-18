@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from agents.generation.config import Settings
+from orchestrator.vendor.member3_v116.agents.generation.config import Settings
 
 ROOT = Path(__file__).resolve().parents[1]
 BUNDLED_FFMPEG_DIR = ROOT / "_tools" / "ffmpeg" / "ffmpeg-9.0.2-essentials_build" / "bin"

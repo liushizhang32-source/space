@@ -1,0 +1,12 @@
+[INFO] 公共 Schema 根目录：C:\Users\zhc\Documents\deepseek-harness\default-workspace\paperbook-ai\.tmpcheck\space
+[INFO] pydantic=2.14.2
+[INFO] OCRData ← C:\Users\zhc\Documents\deepseek-harness\default-workspace\paperbook-ai\.tmpcheck\space\orchestrator\schemas\ocr.py  sha256=397d99d0b38adc959e345bf0473603a886b2642f01849a8bb967a7c41c4bd9ad
+[INFO] VLMData ← C:\Users\zhc\Documents\deepseek-harness\default-workspace\paperbook-ai\.tmpcheck\space\orchestrator\schemas\vlm.py  sha256=cef7e5851e19c1714c931f8f8328e5b014a1c4223991370184483d532697cf54
+[INFO] 待校验 2 页
+
+[PASS] book01_p01 ocr.json  status=ok
+[PASS] book01_p01 vlm.json  status=ok
+[PASS] exif01_p01 ocr.json  status=ok
+[PASS] exif01_p01 vlm.json  status=ok
+
+结论：2 页、4 个产物全部通过公共 Schema 校验

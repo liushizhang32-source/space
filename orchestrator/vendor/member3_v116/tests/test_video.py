@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from agents.generation.config import Settings
-from agents.generation.errors import VideoError
-from agents.generation.media import probe_video
-from agents.generation.schemas import VideoDoc
-from agents.generation.story.builder import build_page_story
-from agents.generation.video import compose_video
+from orchestrator.vendor.member3_v116.agents.generation.config import Settings
+from orchestrator.vendor.member3_v116.agents.generation.errors import VideoError
+from orchestrator.vendor.member3_v116.agents.generation.media import probe_video
+from orchestrator.vendor.member3_v116.agents.generation.schemas import VideoDoc
+from orchestrator.vendor.member3_v116.agents.generation.story.builder import build_page_story
+from orchestrator.vendor.member3_v116.agents.generation.video import compose_video
 
 
 def _build_story(settings: Settings, ocr: dict, vlm: dict) -> dict:
@@ -79,7 +79,7 @@ def test_retry_once_then_fail(media_settings: Settings, page_image, monkeypatch,
         calls["n"] += 1
         raise VideoError("故意失败")
 
-    monkeypatch.setattr("agents.generation.video._render_once", boom)
+    monkeypatch.setattr("orchestrator.vendor.member3_v116.agents.generation.video._render_once", boom)
     with pytest.raises(VideoError):
         compose_video("book01_p03", story, settings)
     assert calls["n"] == 2, "契约要求 Video 重试 1 次"
@@ -92,7 +92,7 @@ def test_video_json_not_written_on_failure(media_settings: Settings, monkeypatch
     def boom(*args, **kwargs):
         raise VideoError("故意失败")
 
-    monkeypatch.setattr("agents.generation.video._render_once", boom)
+    monkeypatch.setattr("orchestrator.vendor.member3_v116.agents.generation.video._render_once", boom)
     with pytest.raises(VideoError):
         compose_video("book01_p03", story, settings)
     assert not (settings.json_dir / "book01_p03_video.json").is_file()
