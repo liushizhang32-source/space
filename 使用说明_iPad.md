@@ -31,6 +31,14 @@
 
 Windows用户可用`.runtime/app/Scripts/python.exe scripts/ipad_control.py reset-pin`在本机重设家长口令；不能从儿童API重置。家庭CA及设备信息保留在LocalAppData/PaperbookZhiban/m1-local-cloud/ipad-security，不能把含私钥的目录发给别人。每次新电脑安装生成自己的CA，不共享开发机证书。
 
+## iPad一直载入的排查
+
+- 必须输入完整端口：首次引导`http://电脑IP:8767/`，应用`https://电脑IP:8766/`，只输入电脑IP会访问错误的80端口。
+- 电脑与iPad须同一Wi-Fi且未启用访客/AP客户端隔离。核对iPad详情中的“IP地址”，不要把“路由器”地址当iPad地址。
+- Windows虚拟环境入口会转到实际底层Python。启动器按`sys._base_executable`配置防火墙程序路径，并在重复启动时修复规则；只放行指定私有IPv4、本地子网、8766/8767两端口。
+- 如果服务由Codex/其他隔离运行环境启动，隔离环境可能额外禁止非回环入站。不要修改或关闭隔离规则；安全停止该实例后，由设备持有人在正常Windows资源管理器中双击START_IPAD_SERVER.bat启动。
+- 防火墙规则添加与修复需Windows UAC批准。引导页都打不开时先查网络/防火墙；能打开引导页但HTTPS失败时再按引导安装并信任家庭CA。
+
 ## 验收范围
 
 `tests/ipad`覆盖授权/撤销、家长与儿童边界、CSRF/Origin、HEIC/PDF、多页、PWA静态缓存限制、严格证书链/SAN、四种iPad横竖视口及真实视频播放。Windows WebKit与Safari的媒体编解码器不同，因此保留Windows失败证据，同时使用macOS WebKit执行相同完整播放断言，不把真机或云端测试写成通过。原96项真实本地/模拟云端验收与原M1/M2/M3完整回归继续保留。
